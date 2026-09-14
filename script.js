@@ -1,174 +1,71 @@
-document.addEventListener("DOMContentLoaded", () => {
-    const todoForm = document.getElementById("todo-form");
-    const taskInput = document.getElementById("task-title");
-    const prioritySelect = document.getElementById("task-priority");
-    const categorySelect = document.getElementById("task-category");
-    const dateInput = document.getElementById("task-date");
+const API_URL = "http://127.0.0.1:8000/api/tasks";
 
-    const taskList = document.getElementById("task-list");
-    const pendingCount = document.getElementById("pending-count");
-    const searchInput = document.getElementById("search-input");
-    const filterTabs = document.querySelectorAll(".tab");
-    const emptyState = document.getElementById("empty-state");
-    const clearCompletedBtn = document.getElementById("clear-completed-btn");
+document.addEventListener("DOMContentLoaded", fetchTasks);
+document.getElementById("task-form").addEventListener("submit", addTask);
 
-    const API_URL = "http://localhost:8000/api/tasks";
+async function fetchTasks() {
+  try {
+    const res = await fetch(API_URL);
+    const data = await res.json();
+    renderTasks(data.tasks);
+  } catch (err) {
+    console.error("Error fetching tasks:", err);
+  }
+}
 
-    let tasks = [];
-    let currentFilter = "all";
-    let searchQuery = "";
+function renderTasks(tasks) {
+  const container = document.getElementById("tasks-container");
+  container.innerHTML = "";
 
-    // 1. Fetch tasks from Python Server on page load
-    async function fetchTasks() {
-        try {
-            const response = await fetch(API_URL);
-            const data = await response.json();
-            if (data.success) {
-                tasks = data.tasks;
-                renderTasks();
-            }
-        } catch (error) {
-            console.error("Error connecting to MCP/REST server:", error);
-        }
-    }
+  tasks.forEach(task => {
+    const div = document.createElement("div");
+    div.className = `task-card ${task.status || 'pending'} priority-${task.priority}`;
+    
+    const subtasksHtml = (task.subtasks || []).map(s => `<li>${s.title}</li>`).join("");
 
-    // 2. Add a new task to Python Server via REST POST request
-    async function addTaskToServer(title, priority, category, dueDate) {
-        try {
-            const response = await fetch(API_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    title: title,
-                    priority: priority,
-                    category: category,
-                    dueDate: dueDate
-                })
-            });
+    div.innerHTML = `
+      <div class="task-header">
+        <h3>${task.title}</h3>
+        <span class="badge status-${task.status}">${task.status || 'pending'}</span>
+      </div>
+      <p class="due">Due: ${task.due_datetime ? new Date(task.due_datetime).toLocaleString() : 'No date set'}</p>
+      ${subtasksHtml ? `<ul class="subtasks">${subtasksHtml}</ul>` : ''}
+      <div class="actions">
+        <button onclick="updateStatus(${task.id}, 'in_progress')">In Progress</button>
+        <button onclick="updateStatus(${task.id}, 'completed')">Complete</button>
+        <button onclick="deleteTask(${task.id})" class="delete-btn">Delete</button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
 
-            const data = await response.json();
-            if (data.success) {
-                // Fetch fresh list from server so tasks.json is the single source of truth
-                await fetchTasks();
-            }
-        } catch (error) {
-            console.error("Error adding task to server:", error);
-        }
-    }
+async function addTask(e) {
+  e.preventDefault();
+  const title = document.getElementById("task-title").value;
+  const due = document.getElementById("task-due").value;
+  const priority = document.getElementById("task-priority").value;
 
-    // 3. Delete a task from Python Server via REST DELETE request
-    async function deleteTask(id) {
-        try {
-            const response = await fetch(`${API_URL}/${id}`, {
-                method: "DELETE"
-            });
-            const data = await response.json();
-            if (data.success) {
-                await fetchTasks();
-            }
-        } catch (error) {
-            console.error("Error deleting task from server:", error);
-        }
-    }
+  await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, due_datetime: due, priority })
+  });
 
-    todoForm.addEventListener("submit", (e) => {
-        e.preventDefault();
-        const title = taskInput.value.trim();
-        if (!title) return;
+  document.getElementById("task-title").value = "";
+  fetchTasks();
+}
 
-        addTaskToServer(
-            title,
-            prioritySelect.value,
-            categorySelect.value,
-            dateInput.value
-        );
+async function updateStatus(id, status) {
+  await fetch(`${API_URL}/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status })
+  });
+  fetchTasks();
+}
 
-        taskInput.value = "";
-        dateInput.value = "";
-    });
-
-    filterTabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            filterTabs.forEach(t => t.classList.remove("active"));
-            tab.classList.add("active");
-            currentFilter = tab.dataset.filter;
-            renderTasks();
-        });
-    });
-
-    searchInput.addEventListener("input", (e) => {
-        searchQuery = e.target.value.toLowerCase();
-        renderTasks();
-    });
-
-    clearCompletedBtn.addEventListener("click", () => {
-        const completedTasks = tasks.filter(t => t.completed || t.done);
-        completedTasks.forEach(t => deleteTask(t.id));
-    });
-
-    function toggleTask(id) {
-        tasks = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-        renderTasks();
-    }
-
-    function renderTasks() {
-        taskList.innerHTML = "";
-
-        const filteredTasks = tasks.filter(task => {
-            const isCompleted = task.completed || task.done || false;
-            const matchesFilter =
-                currentFilter === "all" ? true :
-                    currentFilter === "active" ? !isCompleted : isCompleted;
-
-            const matchesSearch = task.title.toLowerCase().includes(searchQuery);
-
-            return matchesFilter && matchesSearch;
-        });
-
-        if (filteredTasks.length === 0) {
-            emptyState.classList.remove("hidden");
-        } else {
-            emptyState.classList.add("hidden");
-        }
-
-        filteredTasks.forEach(task => {
-            const isCompleted = task.completed || task.done || false;
-            const li = document.createElement("li");
-            li.className = `task-item ${isCompleted ? "completed" : ""}`;
-
-            const dateLabel = task.dueDate ? `📅 ${task.dueDate}` : "";
-
-            li.innerHTML = `
-                <div class="task-left">
-                    <input type="checkbox" class="task-checkbox" ${isCompleted ? "checked" : ""}>
-                    <div class="task-details">
-                        <span class="task-title-text">${escapeHtml(task.title)}</span>
-                        <div class="task-meta">
-                            <span class="meta-tag priority-${task.priority}">${task.priority}</span>
-                            <span class="meta-tag">${task.category || 'General'}</span>
-                            ${dateLabel ? `<span class="meta-tag">${dateLabel}</span>` : ''}
-                        </div>
-                    </div>
-                </div>
-                <button class="delete-btn">&times;</button>
-            `;
-
-            li.querySelector(".task-checkbox").addEventListener("change", () => toggleTask(task.id));
-            li.querySelector(".delete-btn").addEventListener("click", () => deleteTask(task.id));
-
-            taskList.appendChild(li);
-        });
-
-        const activeCount = tasks.filter(t => !(t.completed || t.done)).length;
-        pendingCount.textContent = `${activeCount} Pending`;
-    }
-
-    function escapeHtml(text) {
-        const div = document.createElement("div");
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    // Initial load from server
-    fetchTasks();
-});
+async function deleteTask(id) {
+  await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+  fetchTasks();
+}

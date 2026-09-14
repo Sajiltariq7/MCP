@@ -1,69 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Task Command Center</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <title>Agentic Task Manager</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="app-container">
-        <header class="app-header">
-            <div>
-                <h1>Tasks</h1>
-                <p class="subtitle">Organize, prioritize, and achieve</p>
-            </div>
-            <div class="header-stats">
-                <span id="pending-count" class="stat-badge">0 Pending</span>
-            </div>
-        </header>
+  <div class="container">
+    <h1>Agentic Task Dashboard</h1>
+    
+    <form id="task-form">
+      <input type="text" id="task-title" placeholder="What needs to be done?" required />
+      <input type="datetime-local" id="task-due" />
+      <select id="task-priority">
+        <option value="low">Low</option>
+        <option value="normal" selected>Normal</option>
+        <option value="high">High</option>
+      </select>
+      <button type="submit">Add Task</button>
+    </form>
 
-        <!-- New Task Form -->
-        <form id="todo-form" class="todo-form">
-            <div class="form-row">
-                <input type="text" id="task-title" placeholder="What needs to be done?" required autofocus>
-            </div>
-            <div class="form-row options-row">
-                <select id="task-priority">
-                    <option value="normal">Normal Priority</option>
-                    <option value="high">High Priority</option>
-                    <option value="low">Low Priority</option>
-                </select>
-                
-                <select id="task-category">
-                    <option value="General">General</option>
-                    <option value="Work">Work</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Urgent">Urgent</option>
-                </select>
+    <div id="tasks-container"></div>
+  </div>
 
-                <input type="date" id="task-date">
-
-                <button type="submit" id="add-btn">+ Add Task</button>
-            </div>
-        </form>
-
-        <!-- Toolbar: Search and Filters -->
-        <div class="toolbar">
-            <input type="text" id="search-input" placeholder="🔍 Search tasks...">
-            <div class="filter-tabs">
-                <button class="tab active" data-filter="all">All</button>
-                <button class="tab" data-filter="active">Active</button>
-                <button class="tab" data-filter="completed">Completed</button>
-            </div>
-        </div>
-
-        <!-- Task List Container -->
-        <main class="task-section">
-            <ul id="task-list" class="task-list"></ul>
-            <div id="empty-state" class="empty-state hidden">No tasks found.</div>
-        </main>
-
-        <footer class="app-footer">
-            <button id="clear-completed-btn" class="footer-btn">Clear Completed</button>
-        </footer>
-    </div>
-
-    <script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>

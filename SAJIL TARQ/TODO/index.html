@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Agentic Task Manager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Agentic Task Dashboard</h1>
+    
+    <form id="task-form">
+      <input type="text" id="task-title" placeholder="What needs to be done?" required />
+      <input type="datetime-local" id="task-due" />
+      <select id="task-priority">
+        <option value="low">Low</option>
+        <option value="normal" selected>Normal</option>
+        <option value="high">High</option>
+      </select>
+      <button type="submit">Add Task</button>
+    </form>
+
+    <div id="tasks-container"></div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

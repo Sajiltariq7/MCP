@@ -1,177 +1,114 @@
-"""
-MCP Server supporting both OpenCode (stdio mode) and Web REST API (Uvicorn)
-with persistent file storage via tasks.json.
-"""
-
-import sys
-import os
+from fastmcp import FastMCP
 import json
-import uvicorn
-from starlette.applications import Starlette
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-from starlette.middleware import Middleware
-from starlette.middleware.cors import CORSMiddleware
+import os
+from datetime import datetime
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks.json")
+mcp = FastMCP("Automated TODO Engine")
 
-def load_tasks():
-    if os.path.exists(DATA_FILE):
+TASKS_FILE = "tasks.json"
+HISTORY_FILE = "activity_history.json"
+
+def load_data(filepath):
+    if not os.path.exists(filepath):
+        return []
+    with open(filepath, "r") as f:
         try:
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
+            return json.load(f)
+        except json.JSONDecodeError:
             return []
-    return []
 
-def save_tasks(tasks):
-    with open(DATA_FILE, "w") as f:
-        json.dump(tasks, f, indent=2)
+def save_data(filepath, data):
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2)
 
-def get_all_tasks():
-    return load_tasks()
+def log_activity(tool_name, task_id, details, status="success"):
+    history = load_data(HISTORY_FILE)
+    entry = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "tool_called": tool_name,
+        "task_id": task_id,
+        "details": details,
+        "status": status
+    }
+    history.insert(0, entry)
+    save_data(HISTORY_FILE, history)
 
-def add_new_task(title, priority="normal", category="General", due_date=""):
-    tasks = load_tasks()
-    task_id = max([t["id"] for t in tasks], default=0) + 1
+@mcp.tool
+def get_tasks():
+    """Retrieve all tasks from tasks.json."""
+    return load_data(TASKS_FILE)
+
+@mcp.tool
+def add_task(title: str, description: str = "", automated: bool = False):
+    """Add a new task to the system."""
+    tasks = load_data(TASKS_FILE)
     new_task = {
-        "id": task_id,
+        "id": f"task-{len(tasks) + 101}",
         "title": title,
-        "priority": priority,
-        "category": category,
-        "dueDate": due_date,
-        "completed": False
+        "description": description,
+        "status": "pending",
+        "assigned_agent": "agent-orchestrator" if automated else "human",
+        "automated": automated,
+        "subtasks": [],
+        "logs": [f"[{datetime.now().strftime('%H:%M:%S')}] Task created."],
+        "github_branch": "main",
+        "created_at": datetime.now().isoformat()
     }
     tasks.append(new_task)
-    save_tasks(tasks)
+    save_data(TASKS_FILE, tasks)
+    log_activity("add_task", new_task["id"], f"Created task: {title}")
     return new_task
 
-def delete_existing_task(task_id):
-    tasks = load_tasks()
-    initial_count = len(tasks)
-    tasks = [t for t in tasks if t["id"] != task_id]
-    if len(tasks) < initial_count:
-        save_tasks(tasks)
-        return True
-    return False
+@mcp.tool
+def auto_decompose_task(task_id: str):
+    """Break down a high-level task into actionable subtasks."""
+    tasks = load_data(TASKS_FILE)
+    for task in tasks:
+        if task["id"] == task_id:
+            generated_subtasks = [
+                {"title": f"Analyze requirements for {task['title']}", "completed": False},
+                {"title": "Execute automated updates", "completed": False},
+                {"title": "Run automated tests & verify output", "completed": False}
+            ]
+            task["subtasks"].extend(generated_subtasks)
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Auto-decomposed into subtasks.")
+            save_data(TASKS_FILE, tasks)
+            log_activity("auto_decompose_task", task_id, "Generated subtasks automatically.")
+            return task
+    return {"error": "Task not found"}
 
-TOOLS_SCHEMA = [
-    {
-        "name": "add_task",
-        "description": "Add a new task to the to-do list.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "priority": {"type": "string", "enum": ["low", "normal", "high"], "default": "normal"}
-            },
-            "required": ["title"]
-        }
-    },
-    {
-        "name": "list_tasks",
-        "description": "List all current tasks.",
-        "inputSchema": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "delete_task",
-        "description": "Delete a task from the to-do list by its ID.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer", "description": "The ID of the task to delete"}
-            },
-            "required": ["task_id"]
-        }
-    }
-]
+@mcp.tool
+def execute_agent_task(task_id: str):
+    """Execute automated logic for a task and shift status to needs_review."""
+    tasks = load_data(TASKS_FILE)
+    for task in tasks:
+        if task["id"] == task_id:
+            task["status"] = "needs_review"
+            for sub in task["subtasks"]:
+                sub["completed"] = True
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Agent execution completed. Pending review.")
+            save_data(TASKS_FILE, tasks)
+            log_activity("execute_agent_task", task_id, "Execution complete. Waiting for approval.")
+            return task
+    return {"error": "Task not found"}
 
-def process_rpc_request(body):
-    req_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params", {})
+@mcp.tool
+def update_task_status(task_id: str, new_status: str):
+    """Update task status (pending, in_progress, needs_review, completed)."""
+    tasks = load_data(TASKS_FILE)
+    for task in tasks:
+        if task["id"] == task_id:
+            task["status"] = new_status
+            task["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] Status changed to {new_status}.")
+            save_data(TASKS_FILE, tasks)
+            log_activity("update_task_status", task_id, f"Shifted status to {new_status}")
+            return task
+    return {"error": "Task not found"}
 
-    if method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "custom-todo-server", "version": "1.0.0"}
-            }
-        }
-    elif method == "tools/list":
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"tools": TOOLS_SCHEMA}
-        }
-    elif method == "tools/call":
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-
-        if tool_name == "add_task":
-            t = add_new_task(arguments.get("title", ""), arguments.get("priority", "normal"))
-            res = f"Added task #{t['id']}: '{t['title']}'"
-        elif tool_name == "list_tasks":
-            all_t = get_all_tasks()
-            res = "\n".join([f"[{t['id']}] {t['title']}" for t in all_t]) if all_t else "No tasks."
-        elif tool_name == "delete_task":
-            task_id = arguments.get("task_id")
-            success = delete_existing_task(task_id)
-            if success:
-                res = f"Successfully deleted task #{task_id}"
-            else:
-                res = f"Task #{task_id} not found."
-        else:
-            res = f"Unknown tool: {tool_name}"
-
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"content": [{"type": "text", "text": res}]}
-        }
-
-    return {"jsonrpc": "2.0", "id": req_id, "result": "ok"}
-
-# --- REST Endpoints ---
-async def rest_get_tasks(request):
-    return JSONResponse({"success": True, "tasks": get_all_tasks()})
-
-async def rest_create_task(request):
-    data = await request.json()
-    task = add_new_task(data.get("title", ""), data.get("priority", "normal"), data.get("category", "General"), data.get("dueDate", ""))
-    return JSONResponse({"success": True, "task": task})
-
-async def rest_delete_task(request):
-    task_id = int(request.path_params.get("task_id"))
-    success = delete_existing_task(task_id)
-    return JSONResponse({"success": success})
-
-routes = [
-    Route("/api/tasks", endpoint=rest_get_tasks, methods=["GET"]),
-    Route("/api/tasks", endpoint=rest_create_task, methods=["POST"]),
-    Route("/api/tasks/{task_id:int}", endpoint=rest_delete_task, methods=["DELETE"]),
-]
-
-app = Starlette(routes=routes, middleware=[Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])])
-
-def run_stdio():
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-            res = process_rpc_request(req)
-            sys.stdout.write(json.dumps(res) + "\n")
-            sys.stdout.flush()
-        except Exception:
-            pass
+@mcp.tool
+def get_activity_history():
+    """Get full audit history from activity_history.json."""
+    return load_data(HISTORY_FILE)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--http":
-        uvicorn.run(app, host="127.0.0.1", port=8000)
-    else:
-        run_stdio()
+    mcp.run()

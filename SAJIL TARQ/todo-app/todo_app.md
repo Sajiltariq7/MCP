@@ -1,2 +1,0 @@
-todo-app description
-This is a Todo App based on a simple agent-based approach. The project provides a basic structure for agents to interact with each other and with a task list. It allows for addition, completion, deletion and counting of todo tasks. The implementation follows PEP 8 for Python3.11+ and adheres to good coding practices.

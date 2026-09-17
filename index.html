@@ -2,25 +2,52 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Agentic Task Manager</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Autonomous Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <div class="container">
-    <h1>Agentic Task Dashboard</h1>
+<body class="p-6">
+  <!-- Top Navigation Header -->
+  <header class="flex justify-between items-center mb-6 pb-4 border-b border-red-900/40">
+    <div class="flex items-center gap-3">
+      <div class="w-3 h-3 rounded-full bg-red-600 animate-pulse"></div>
+      <h1 class="text-xl font-bold tracking-wider text-red-500">MCP ENGINE <span class="text-xs text-gray-500 font-normal">v2.0</span></h1>
+    </div>
     
-    <form id="task-form">
-      <input type="text" id="task-title" placeholder="What needs to be done?" required />
-      <input type="datetime-local" id="task-due" />
-      <select id="task-priority">
-        <option value="low">Low</option>
-        <option value="normal" selected>Normal</option>
-        <option value="high">High</option>
-      </select>
-      <button type="submit">Add Task</button>
-    </form>
+    <!-- Tab Controls -->
+    <div class="flex gap-2 bg-[#16161E] p-1 rounded-lg border border-gray-800">
+      <button onclick="switchTab('kanban')" id="tab-kanban" class="tab-btn tab-active">Kanban Board</button>
+      <button onclick="switchTab('pending')" id="tab-pending" class="tab-btn">Pending Tasks</button>
+      <button onclick="switchTab('completed')" id="tab-completed" class="tab-btn">Completed Archive</button>
+      <button onclick="switchTab('history')" id="tab-history" class="tab-btn">Audit Trail</button>
+    </div>
+  </header>
 
-    <div id="tasks-container"></div>
+  <!-- View 1: Kanban Board View -->
+  <div id="view-kanban" class="tab-content grid grid-cols-4 gap-4">
+    <div class="column-box"><h2 class="col-title text-gray-400">Pending</h2><div id="col-pending"></div></div>
+    <div class="column-box"><h2 class="col-title text-yellow-500">In Progress</h2><div id="col-in_progress"></div></div>
+    <div class="column-box"><h2 class="col-title text-blue-400">Needs Review</h2><div id="col-needs_review"></div></div>
+    <div class="column-box"><h2 class="col-title text-green-400">Completed</h2><div id="col-completed"></div></div>
+  </div>
+
+  <!-- View 2: Dedicated Pending View -->
+  <div id="view-pending" class="tab-content hidden panel-box">
+    <h2 class="text-lg font-bold text-red-500 mb-4">Active & Pending Tasks</h2>
+    <div id="pending-list" class="space-y-3"></div>
+  </div>
+
+  <!-- View 3: Dedicated Completed Archive -->
+  <div id="view-completed" class="tab-content hidden panel-box">
+    <h2 class="text-lg font-bold text-green-500 mb-4">Completed Task Archive</h2>
+    <div id="completed-list" class="space-y-3"></div>
+  </div>
+
+  <!-- View 4: Server Audit Trail View -->
+  <div id="view-history" class="tab-content hidden panel-box">
+    <h2 class="text-lg font-bold text-red-500 mb-4">MCP Server Activity History</h2>
+    <div id="history-list" class="font-mono text-xs space-y-2"></div>
   </div>
 
   <script src="script.js"></script>

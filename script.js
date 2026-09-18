@@ -640,3 +640,28 @@ async function updateTaskFromModal(taskId) {
 function closeDetailModal() {
   document.getElementById('detailModal').classList.add('hidden');
 }
+
+// Function to handle column selection
+function setupColumnSelection() {
+  const columns = document.querySelectorAll('.kanban-col');
+
+  columns.forEach((col) => {
+    col.addEventListener('click', (e) => {
+      // Avoid triggering column selection if clicking directly on a task card or button inside
+      if (e.target.closest('.task-card') || e.target.closest('button')) {
+        return;
+      }
+
+      // Remove .selected class from all columns
+      columns.forEach((c) => c.classList.remove('selected'));
+
+      // Add .selected class to the clicked column
+      col.classList.add('selected');
+    });
+  });
+}
+
+// Ensure this function runs after the DOM content is fully loaded
+document.addEventListener('DOMContentLoaded', () => {
+  setupColumnSelection();
+});

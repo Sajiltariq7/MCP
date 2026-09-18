@@ -566,3 +566,8 @@ body::selection {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
 }
+
+.kanban-col.selected {
+  border-color: #6d0303e7 !important;
+  box-shadow: 0 0 18px rgba(239, 68, 68, 0.4) !important;
+}

@@ -3,6 +3,10 @@ import time
 from datetime import datetime, timezone
 import requests
 from mcp.server.fastmcp import FastMCP
+from database import init_db, log_activity
+
+# Initialize SQLite database table on startup
+init_db()
 
 mcp = FastMCP("Secure Task Manager")
 

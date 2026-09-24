@@ -79,8 +79,10 @@ def save_or_update_task(task: Dict[str, Any]):
         if new_status == "In Progress" and old_status != "In Progress":
             task["started_at"] = now_iso
 
-        # 2. Status changed to "Needs Review" -> Record completion time and compute time_elapsed
-        elif new_status == "Needs Review" and old_status != "Needs Review":
+        
+          # 2. Status changed to "Needs Review" -> Record completion time, compute time_elapsed, and stop active status
+        elif new_status in ["Needs Review", "need_review"] and old_status not in ["Needs Review", "need_review"]:
+            task["is_active"] = False  # <--- STOP ACTIVE STATE HERE
             task["completed_at"] = now_iso
             if task.get("started_at"):
                 try:

@@ -1,0 +1,114 @@
+[
+  {
+    "id": "1790168345503",
+    "title": "Update documentation",
+    "description": "Write agents.md",
+    "status": "Pending",
+    "priority": "low",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.503719+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345517",
+    "title": "typing.......",
+    "description": "type a paragraph of 10000 words.",
+    "status": "Needs Review",
+    "priority": "normal",
+    "due_date": null,
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.517535+00:00",
+    "started_at": "2026-09-23T13:15:36.934372+00:00",
+    "completed_at": "2026-09-24T06:14:24.422391+00:00",
+    "duration_ms": null,
+    "subtasks": [],
+    "approved_at": null,
+    "time_elapsed": "61127.49s"
+  },
+  {
+    "id": "1790168345541",
+    "title": "task test1",
+    "description": "testing",
+    "status": "Pending",
+    "priority": "medium",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.541614+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345570",
+    "title": "SSE Server Test",
+    "description": "",
+    "status": "Pending",
+    "priority": "high",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.570067+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345604",
+    "title": "Solve quadratic equation",
+    "description": "Find roots of ax\u00b2 + bx + c = 0 using the quadratic formula",
+    "status": "Pending",
+    "priority": "high",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.604804+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345632",
+    "title": "Calculate matrix determinant",
+    "description": "Calculate the determinant of a 3x3 matrix",
+    "status": "Pending",
+    "priority": "medium",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.632081+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345662",
+    "title": "Find derivative of a function",
+    "description": "Find the derivative of f(x) = x\u00b3 + 2x\u00b2 - 5x + 1",
+    "status": "Pending",
+    "priority": "low",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.662253+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345689",
+    "title": "Compute integral",
+    "description": "Compute the definite integral of sin(x) from 0 to \u03c0",
+    "status": "Pending",
+    "priority": "normal",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.689642+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345715",
+    "title": "Verify Pythagorean theorem",
+    "description": "Verify that a\u00b2 + b\u00b2 = c\u00b2 for a right triangle",
+    "status": "Pending",
+    "priority": "high",
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.715499+00:00",
+    "subtasks": []
+  },
+  {
+    "id": "1790168345742",
+    "title": "Solve 25*4",
+    "description": "Compute the multiplication of 25 and 4",
+    "status": "Pending",
+    "priority": "normal",
+    "due_date": null,
+    "creator": "AI",
+    "created_at": "2026-09-23T12:59:05.742206+00:00",
+    "started_at": "2026-09-23T13:07:58.892959+00:00",
+    "completed_at": "2026-09-23T13:08:03.713425+00:00",
+    "duration_ms": null,
+    "subtasks": [],
+    "approved_at": null,
+    "time_elapsed": "4.82s"
+  }
+]

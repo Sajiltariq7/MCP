@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP ENGINE</title>
+  <!-- Tailwind CSS & FontAwesome Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ========================================== -->
+  <!-- 1. LEFT SIDEBAR (Navigation & Status)      -->
+  <!-- ========================================== -->
+  <aside class="sidebar">
+    <div>
+      
+      <!-- App Header / Logo -->
+      <div class="logo-container">
+        <div class="logo-icon">
+          <i class="fa-solid fa-bolt text-sm animate-pulse"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-sm tracking-wider text-white">MCP ENGINE</h1>
+          <span class="text-[10px] text-zinc-500 font-mono tracking-tight">v2.5</span>
+        </div>
+      </div>
+
+      <!-- Button: Open "Create Task" Modal -->
+      <button onclick="openTaskModal()" class="btn-create-task my-6">
+        <i class="fa-solid fa-plus text-xs"></i>
+        <span class="text-sm">Create New Task</span>
+      </button>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-group">
+        <button onclick="switchTab('board')" id="nav-board" class="nav-link active">
+          <i class="fa-solid fa-columns w-5 text-red-500"></i>
+          <span>Task Overview</span>
+        </button>
+        <button onclick="switchTab('list')" id="nav-list" class="nav-link">
+          <i class="fa-solid fa-list-check w-5 text-zinc-500"></i>
+          <span>Task Manager</span>
+        </button>
+        <button onclick="switchTab('audit')" id="nav-audit" class="nav-link">
+          <i class="fa-solid fa-clock-rotate-left w-5 text-zinc-500"></i>
+          <span>Audit & History</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- API Connection Status Badge -->
+    <div class="border-t border-zinc-800/60 pt-4 px-1">
+      <span class="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block mb-2">FastMCP API</span>
+      <div id="api-status" class="api-badge api-badge-connected">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span>FastMCP: Connected</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========================================== -->
+  <!-- 2. MAIN AREA (Search & Views)               -->
+  <!-- ========================================== -->
+  <main class="main-area">
+    
+    <!-- Header: Search bar & Refresh button -->
+    <header class="top-header">
+      <div class="search-container">
+        <div class="search-wrapper">
+          <i class="fa-solid fa-magnifying-glass search-icon"></i>
+          <input type="text" id="searchInput" oninput="renderDashboard()" placeholder="Search tasks, tags..." class="search-input">
+        </div>
+      </div>
+      <div>
+        <button onclick="fetchTasks()" class="btn-refresh">
+          <i class="fa-solid fa-rotate-right text-zinc-400"></i>
+          <span>Refresh Data</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Dynamic Views Section -->
+    <div class="content-container">
+      
+      <!-- VIEW 1: KANBAN BOARD -->
+      <section id="view-board" class="block view-section">
+        <div class="mb-6">
+          <h2 class="section-title">Task Overview</h2>
+        </div>
+
+        <div class="kanban-grid">
+          <!-- Column: Pending -->
+          <div class="kanban-col col-pending">
+            <div class="kanban-header">
+              <span class="kanban-title">Pending</span>
+              <span id="count-pending" class="kanban-count">0</span>
+            </div>
+            <div id="col-pending" class="kanban-list"></div>
+          </div>
+
+          <!-- Column: In Progress -->
+          <div class="kanban-col col-progress">
+            <div class="kanban-header">
+              <span class="kanban-title">In Progress</span>
+              <span id="count-progress" class="kanban-count">0</span>
+            </div>
+            <div id="col-progress" class="kanban-list"></div>
+          </div>
+
+          <!-- Column: Needs Review -->
+          <div class="kanban-col col-review">
+            <div class="kanban-header">
+              <span class="kanban-title">Needs Review</span>
+              <span id="count-review" class="kanban-count">0</span>
+            </div>
+            <div id="col-review" class="kanban-list"></div>
+          </div>
+
+          <!-- Column: Completed -->
+          <div class="kanban-col col-completed">
+            <div class="kanban-header">
+              <span class="kanban-title">Completed</span>
+              <span id="count-completed" class="kanban-count">0</span>
+            </div>
+            <div id="col-completed" class="kanban-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: TASK TABLE MANAGER -->
+      <section id="view-list" class="hidden view-section">
+        <div class="mb-6">
+          <h2 class="section-title">Task Manager</h2>
+          <p class="section-subtitle">Manage, search, and edit active tasks in tabular format.</p>
+        </div>
+
+        <div class="table-container">
+          <table class="task-table">
+            <thead>
+              <tr>
+                <th>Task Title</th>
+                <th>Status</th>
+                <th>Creator</th>
+                <th>Total Duration</th>
+                <th class="text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="task-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- VIEW 3: AUDIT & HISTORY LOGS -->
+      <section id="view-audit" class="hidden view-section audit-container">
+        <div class="mb-6">
+          <h2 class="section-title">Audit & History</h2>
+          <p class="section-subtitle">System activity logs and execution events.</p>
+        </div>
+
+        <div id="audit-log-container" class="audit-logs"></div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ========================================== -->
+  <!-- 3. MODAL: CREATE / EDIT TASK               -->
+  <!-- ========================================== -->
+  <div id="taskModal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle" class="modal-title">
+          <i class="fa-solid fa-plus-circle text-red-500 text-sm"></i> Create New Task
+        </h3>
+        <button onclick="closeTaskModal()" class="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Title</label>
+          <input type="text" id="taskTitleInput" placeholder="Enter task title..." class="modal-input">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="taskDescInput" rows="3" placeholder="Enter task details..." class="modal-textarea"></textarea>
+        </div>
+
+        <!-- Priority & Status Selection -->
+        <div class="form-grid-2">
+          <div>
+            <label class="form-label">Priority</label>
+            <select id="taskPriorityInput" class="modal-select">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Status</label>
+            <select id="taskStatusInput" class="modal-select">
+              <option value="Pending">Pending</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Needs Review">Needs Review</option>
+              <option value="Completed">Completed</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Due Date</label>
+          <input type="date" id="taskDueDateInput" class="modal-input">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button onclick="closeTaskModal()" class="btn-secondary">Cancel</button>
+        <button onclick="saveTask()" class="btn-primary">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 4. MODAL: TASK DETAIL VIEW                 -->
+  <!-- Note: Content is dynamically rendered by   -->
+  <!-- openDetailModal() inside #detailModalBody  -->
+  <!-- ========================================== -->
+  <div id="detailModal" class="modal-overlay hidden">
+    <div class="detail-modal-card">
+      <div class="modal-header">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-zinc-400">Task Details</h3>
+        <button onclick="closeDetailModal()" class="modal-close-btn">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- Dynamic JS Content Target -->
+      <div id="detailModalBody"></div>
+
+      <div class="flex justify-end pt-2">
+        <button onclick="closeDetailModal()" class="btn-refresh">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript Scripts -->
+  <script src="data.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

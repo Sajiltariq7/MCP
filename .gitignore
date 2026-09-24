@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment / Secret variables
+.env
+
+# OS specific
+.DS_Store
+Thumbs.db

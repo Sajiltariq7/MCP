@@ -644,3 +644,28 @@ body::selection {
   border-bottom: 1px solid rgba(239, 68, 68, 0.2);
 }
 
+/* Custom Scrollbar Styles for .custom-scrollbar */
+.custom-scrollbar {
+  /* For Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: #27272a #121318;
+}
+
+/* For Webkit Browsers (Chrome, Safari, Edge) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #242630;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}

@@ -304,6 +304,11 @@ async function updateTaskStatus(taskId, rawNewStatus) {
     if (!task.started_at) task.started_at = now;
     updateSummary = `Task shifted to IN PROGRESS state (AT: ${timeStr})`;
   } else if (newStatusNormalized === 'needs_review') {
+    if (task.started_at && !task.duration_ms) {
+      const startTime = new Date(task.started_at).getTime();
+      const endTime = new Date(now).getTime();
+      task.duration_ms = endTime - startTime;
+    }
     updateSummary = `Task status updated. IT NEEDS REVIEW`;
   } else if (newStatusNormalized === 'completed') {
     task.completed_at = now;
@@ -432,9 +437,21 @@ function openDetailModal(taskId) {
     }).join('');
   }
 
-  const elapsedTime = task.duration_ms 
-    ? formatDuration(task.duration_ms) 
-    : (task.started_at ? `${getElapsed(task.started_at)} (Active)` : 'Not Started');
+  const normStatus = normalizeStatus(task.status);
+  let elapsedTime = 'Not Started';
+
+  if (task.duration_ms) {
+    elapsedTime = formatDuration(task.duration_ms);
+  } else if (task.started_at) {
+    const elapsed = getElapsed(task.started_at);
+    if (normStatus === 'in_progress') {
+      elapsedTime = `${elapsed} (Active)`;
+    } else if (normStatus === 'needs_review') {
+      elapsedTime = `${elapsed} (In Review)`;
+    } else {
+      elapsedTime = `${elapsed} (Paused)`;
+    }
+  }
 
   detailBody.innerHTML = `
     <div class="space-y-4 my-3 text-xs">
@@ -668,6 +685,9 @@ function renderDashboard() {
       timeBadgeHtml = `<span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1 w-fit"><i class="fa-solid fa-stopwatch text-[10px]"></i> ${formatDuration(t.duration_ms)}</span>`;
     } else if (statusKey === 'in_progress' && t.started_at) {
       timeBadgeHtml = `<span id="active-timer-${t.id}" class="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1 animate-pulse w-fit"><i class="fa-solid fa-play text-[8px]"></i> Active: ${getElapsed(t.started_at)}</span>`;
+    } else if (statusKey === 'needs_review' && t.started_at) {
+      const timeText = t.duration_ms ? formatDuration(t.duration_ms) : getElapsed(t.started_at);
+      timeBadgeHtml = `<span class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1 w-fit"><i class="fa-solid fa-pause text-[8px]"></i> Review: ${timeText}</span>`;
     }
 
     const card = document.createElement('div');

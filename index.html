@@ -248,6 +248,31 @@
     </div>
   </div>
 
+  <!-- Dedicated Task History Modal -->
+<div id="historyModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+  <div class="bg-[#181920] border border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl p-5 space-y-4">
+    <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+      <h3 class="text-sm font-bold uppercase tracking-wider text-zinc-200 flex items-center gap-2">
+        <i class="fa-solid fa-clock-rotate-left text-red-500"></i> Task History
+      </h3>
+      <button onclick="closeHistoryModal()" class="text-zinc-500 hover:text-white transition text-sm">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <div id="historyModalBody" class="space-y-2 max-h-96 overflow-y-auto pr-1 custom-scrollbar">
+      <!-- Dynamic history logs render here -->
+    </div>
+
+    <div class="flex justify-end pt-2 border-t border-zinc-800">
+      <button onclick="closeHistoryModal()" class="px-4 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition font-mono">
+        Close
+      </button>
+    </div>
+  </div>
+</div>
+
+
   <!-- JavaScript Scripts -->
   <script src="data.js"></script>
   <script src="script.js"></script>

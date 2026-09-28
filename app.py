@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from database import init_db, get_db_connection, log_activity
@@ -56,14 +56,39 @@ def get_tasks():
 def save_or_update_task(task: TaskModel):
     conn = get_db_connection()
     cursor = conn.cursor()
-    now = datetime.now().isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
-    cursor.execute("SELECT id FROM tasks WHERE id = ?", (task.id,))
+    cursor.execute("SELECT * FROM tasks WHERE id = ?", (task.id,))
     existing = cursor.fetchone()
 
-    subtasks_json = json.dumps(task.subtasks)
+    subtasks_json = json.dumps(task.subtasks) if task.subtasks else "[]"
 
     if existing:
+        existing_dict = dict(existing)
+        
+        # Preserve original timestamps or set new ones based on status changes
+        started_at = existing_dict.get("started_at")
+        completed_at = existing_dict.get("completed_at")
+        duration_ms = existing_dict.get("duration_ms")
+
+        # Normalize status string comparison
+        new_status = task.status
+        
+        # Transitioning to "In Progress" -> Record start time
+        if new_status == "In Progress" and not started_at:
+            started_at = now_iso
+
+        # Transitioning to "Needs Review" or "Completed" -> Record completion and duration
+        if new_status in ["Needs Review", "Completed"]:
+            completed_at = now_iso
+            if started_at:
+                try:
+                    start_dt = datetime.fromisoformat(started_at)
+                    end_dt = datetime.fromisoformat(completed_at)
+                    duration_ms = int((end_dt - start_dt).total_seconds() * 1000)
+                except Exception:
+                    duration_ms = 0
+
         cursor.execute("""
             UPDATE tasks
             SET title = ?, description = ?, status = ?, priority = ?, due_date = ?,
@@ -71,17 +96,25 @@ def save_or_update_task(task: TaskModel):
             WHERE id = ?
         """, (
             task.title, task.description, task.status, task.priority, task.due_date,
-            task.creator, task.started_at, task.completed_at, task.duration_ms, subtasks_json, task.id
+            task.creator, started_at, completed_at, duration_ms, subtasks_json, task.id
         ))
         action = "UPDATE_TASK"
-        details = f"Task '{task.title}' updated"
+        details = f"Task '{task.title}' updated to {task.status}"
     else:
+        # Creating a new task
+        started_at = task.started_at
+        completed_at = task.completed_at
+        duration_ms = task.duration_ms
+
+        if task.status == "In Progress" and not started_at:
+            started_at = now_iso
+
         cursor.execute("""
             INSERT INTO tasks (id, title, description, status, priority, due_date, creator, created_at, started_at, completed_at, duration_ms, subtasks)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task.id, task.title, task.description, task.status, task.priority, task.due_date,
-            task.creator, task.created_at or now, task.started_at, task.completed_at, task.duration_ms, subtasks_json
+            task.creator, task.created_at or now_iso, started_at, completed_at, duration_ms, subtasks_json
         ))
         action = "CREATE_TASK"
         details = f"Task '{task.title}' created"
@@ -89,7 +122,7 @@ def save_or_update_task(task: TaskModel):
     conn.commit()
     conn.close()
 
-    log_activity(task.actor or "USER", action, "TASK", task.id, details, now)
+    log_activity(task.actor or "USER", action, "TASK", task.id, details, now_iso)
     return {"message": "Success", "id": task.id}
 
 @app.delete("/api/tasks/{task_id}")

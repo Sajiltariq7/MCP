@@ -29,6 +29,30 @@ function toTitleStatus(normalizedStatus) {
   }
 }
 
+// Helper: Safely normalize subtasks into an array of standard objects
+function parseSubtasks(subtasksData) {
+  if (!subtasksData) return [];
+  let parsed = subtasksData;
+  if (typeof subtasksData === 'string') {
+    try {
+      parsed = JSON.parse(subtasksData);
+    } catch (e) {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed.map(item => {
+    if (typeof item === 'object' && item !== null) {
+      return {
+        content: item.content || item.title || item.text || 'Unnamed Subtask',
+        done: Boolean(item.done || item.completed)
+      };
+    }
+    return { content: String(item), done: false };
+  });
+}
+
 // Helper: Format short time string (e.g. "2:45 PM")
 function getShortTime(dateStr = null) {
   const date = dateStr ? new Date(dateStr) : new Date();
@@ -62,7 +86,7 @@ function addLocalAuditLog(action, taskTitle, actor = 'USER', taskId = '', update
     timestamp: new Date().toISOString(),
     action: action,
     actor: actor,
-    updateSummary: updateSummary, // Holds detailed update descriptions
+    updateSummary: updateSummary,
     details: {
       id: taskId,
       title: taskTitle
@@ -268,7 +292,7 @@ async function saveTask() {
       started_at: task.started_at || null,
       completed_at: task.completed_at || null,
       duration_ms: task.duration_ms || null,
-      subtasks: task.subtasks || []
+      subtasks: parseSubtasks(task.subtasks)
     };
 
     try {
@@ -285,8 +309,24 @@ async function saveTask() {
 }
 
 /* ==========================================
-   STATUS DROPDOWN & AUDIT LOG MESSAGES
+   STATUS DROPDOWN & SUBTASK TOGGLE CONTROLS
    ========================================== */
+async function toggleSubtask(taskId, index) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
+
+  const subtasks = parseSubtasks(task.subtasks);
+  if (subtasks[index]) {
+    subtasks[index].done = !subtasks[index].done;
+    task.subtasks = subtasks;
+
+    const completedCount = subtasks.filter(s => s.done).length;
+    addLocalAuditLog('UPDATE', task.title, 'USER', task.id, `Subtask updated (${completedCount}/${subtasks.length} completed)`);
+    saveToLocalStorage();
+    openDetailModal(taskId); // Refresh modal view
+  }
+}
+
 async function updateTaskStatus(taskId, rawNewStatus) {
   const task = state.tasks.find(t => String(t.id) === String(taskId));
   if (!task) return;
@@ -340,7 +380,7 @@ async function updateTaskStatus(taskId, rawNewStatus) {
       started_at: task.started_at || null,
       completed_at: task.completed_at || null,
       duration_ms: task.duration_ms || null,
-      subtasks: Array.isArray(task.subtasks) ? task.subtasks : []
+      subtasks: parseSubtasks(task.subtasks)
     };
 
     try {
@@ -380,23 +420,25 @@ async function deleteTask(taskId) {
 }
 
 /* ==========================================
-   DETAIL MODAL
+   DETAIL MODAL (WITH SUBTASKS INCLUDED)
    ========================================== */
-function openDetailModal(taskId) {
+/* ==========================================
+   DEDICATED HISTORY MODAL CONTROLS
+   ========================================== */
+function openHistoryModal(taskId) {
   const task = state.tasks.find(t => String(t.id) === String(taskId));
-  const detailBody = document.getElementById('detailModalBody');
-  if (!task || !detailBody) return;
+  const historyBody = document.getElementById('historyModalBody');
+  if (!historyBody) return;
 
   const taskLogs = (state.logs || []).filter(log => log.details && String(log.details.id) === String(taskId));
 
-  let historyHtml = '';
   if (taskLogs.length === 0) {
-    historyHtml = `
-      <div class="text-[11px] font-mono text-zinc-500 italic p-3 bg-[#121318] rounded border border-zinc-800/80 text-center">
+    historyBody.innerHTML = `
+      <div class="text-[11px] font-mono text-zinc-500 italic p-4 bg-[#121318] rounded border border-zinc-800/80 text-center">
         No history recorded for this task yet.
       </div>`;
   } else {
-    historyHtml = taskLogs.map(log => {
+    historyBody.innerHTML = taskLogs.map(log => {
       const timeStr = log.timestamp 
         ? new Date(log.timestamp).toLocaleString('en-US', { 
             month: 'short', 
@@ -435,6 +477,70 @@ function openDetailModal(taskId) {
         </div>
       `;
     }).join('');
+  }
+
+  const modal = document.getElementById('historyModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeHistoryModal() {
+  const modal = document.getElementById('historyModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+/* ==========================================
+   UPDATED DETAIL MODAL (CLEAN & SUBTASK FOCUS)
+   ========================================== */
+function openDetailModal(taskId) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  const detailBody = document.getElementById('detailModalBody');
+  if (!task || !detailBody) return;
+
+  const subtasks = parseSubtasks(task.subtasks);
+  let subtasksHtml = '';
+
+  if (subtasks.length > 0) {
+    const completedCount = subtasks.filter(s => s.done).length;
+    subtasksHtml = `
+      <div class="pt-3 border-t border-zinc-800/80">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-list-check text-zinc-500"></i> Subtasks
+          </h4>
+          <span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+            ${completedCount}/${subtasks.length} Done
+          </span>
+        </div>
+        <div class="space-y-1.5 bg-[#121318] p-2.5 rounded border border-zinc-800/80 max-h-60 overflow-y-auto custom-scrollbar">
+          ${subtasks.map((st, idx) => `
+            <div class="flex items-center gap-2.5 p-1.5 rounded hover:bg-zinc-800/40 transition">
+              <input 
+                type="checkbox" 
+                ${st.done ? 'checked' : ''} 
+                onchange="toggleSubtask('${task.id}',${idx})"
+                class="w-3.5 h-3.5 rounded accent-red-500 cursor-pointer bg-zinc-900 border-zinc-700">
+              <span class="text-xs ${st.done ? 'line-through text-zinc-500' : 'text-zinc-200'} font-mono">${st.content}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  } else {
+    subtasksHtml = `
+      <div class="pt-3 border-t border-zinc-800/80">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-list-check text-zinc-500"></i> Subtasks
+          </h4>
+          <span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+            0/0 Done
+          </span>
+        </div>
+        <div class="text-[11px] font-mono text-zinc-500 italic p-3 bg-[#121318] rounded border border-zinc-800/80 text-center">
+          No subtasks created for this task.
+        </div>
+      </div>
+    `;
   }
 
   const normStatus = normalizeStatus(task.status);
@@ -480,18 +586,14 @@ function openDetailModal(taskId) {
         </div>
       </div>
 
-      <div class="pt-3 border-t border-zinc-800/80">
-        <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2.5 flex items-center gap-1.5">
-          <i class="fa-solid fa-clock-rotate-left text-zinc-500"></i> Task History
-        </h4>
-        <div class="space-y-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
-          ${historyHtml}
-        </div>
-      </div>
+      ${subtasksHtml}
 
-      <div class="flex justify-end pt-2 gap-2">
-        <button onclick="closeDetailModal(); openTaskModal('${task.id}')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-white text-xs transition">
-          <i class="fa-solid fa-pen-to-square mr-1"></i> Edit
+      <div class="flex justify-end pt-3 gap-2 border-t border-zinc-800/80">
+        <button onclick="openHistoryModal('${task.id}')" class="px-3 py-1.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs transition border border-zinc-700/50 flex items-center gap-1.5 font-mono">
+          <i class="fa-solid fa-clock-rotate-left text-zinc-400"></i> History
+        </button>
+        <button onclick="closeDetailModal(); openTaskModal('${task.id}')" class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-white text-xs transition flex items-center gap-1.5 font-mono">
+          <i class="fa-solid fa-pen-to-square"></i> Edit
         </button>
       </div>
     </div>
@@ -789,4 +891,20 @@ function formatDate(dateString) {
     minute: '2-digit',
     hour12: true
   });
+}
+
+function toggleTaskHistory() {
+  const container = document.getElementById('taskHistoryContainer');
+  const btn = document.getElementById('historyToggleBtn');
+  
+  if (!container) return;
+  
+  const isHidden = container.classList.contains('hidden');
+  if (isHidden) {
+    container.classList.remove('hidden');
+    if (btn) btn.classList.add('bg-zinc-700', 'text-white');
+  } else {
+    container.classList.add('hidden');
+    if (btn) btn.classList.remove('bg-zinc-700', 'text-white');
+  }
 }

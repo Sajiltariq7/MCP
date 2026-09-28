@@ -1,6 +1,6 @@
 import sqlite3
 
-DB_NAME = "app_activity.db"
+DB_NAME = "tasks.db"  # Check that this matches your desired database file name
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
@@ -25,7 +25,7 @@ def init_db():
             started_at TEXT,
             completed_at TEXT,
             duration_ms INTEGER,
-            subtasks TEXT DEFAULT '[]'
+            subtasks TEXT
         )
     """)
 
@@ -33,28 +33,25 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
             actor TEXT,
             action TEXT,
             entity_type TEXT,
             entity_id TEXT,
-            details TEXT,
-            timestamp TEXT
+            details TEXT
         )
     """)
 
     conn.commit()
     conn.close()
+    # DO NOT put any cursor.executemany(...) or INSERT INTO tasks here!
 
 def log_activity(actor, action, entity_type, entity_id, details, timestamp):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO activity_logs (actor, action, entity_type, entity_id, details, timestamp)
+        INSERT INTO activity_logs (timestamp, actor, action, entity_type, entity_id, details)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (actor, action, entity_type, entity_id, details, timestamp))
+    """, (timestamp, actor, action, entity_type, entity_id, details))
     conn.commit()
     conn.close()
-
-if __name__ == "__main__":
-    init_db()
-    print("Database tables created successfully.")

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "todo-list-server": {
+      "type": "local",
+      "command": [
+        "C:/Users/Memoona/Downloads/SAJIL TARQ/MCP/.venv/Scripts/python.exe",
+        "-u",
+        "C:/Users/Memoona/Downloads/SAJIL TARQ/MCP/mcp_server.py"
+      ]
+    },
+    "calculator-server": {
+      "type": "local",
+      "command": [
+        "C:/Users/Memoona/Downloads/SAJIL TARQ/calculator-mcp-server/.venv/Scripts/python.exe",
+        "-m",
+        "calculator_mcp_server"
+      ],
+      "environment": {
+        "PYTHONPATH": "C:/Users/Memoona/Downloads/SAJIL TARQ/calculator-mcp-server/src"
+      }
+    }
+  }
+}

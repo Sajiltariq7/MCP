@@ -1,11 +1,21 @@
 from datetime import datetime, timezone
 import json
+import logging
 import sys
 import time
 
 from loguru import logger
 from mcp.server.fastmcp import FastMCP
 import requests
+
+# ----------------------------------------------------
+# SILENCE BACKGROUND HTTP & MCP SPAM
+# ----------------------------------------------------
+# Suppress standard Uvicorn access logs (POST /messages...) and MCP pings
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.WARNING)
+logging.getLogger("mcp.server").setLevel(logging.WARNING)
 
 # Instantiate FastMCP server
 mcp = FastMCP("todo-list-server")
@@ -14,27 +24,37 @@ mcp = FastMCP("todo-list-server")
 BASE_URL = "http://127.0.0.1:8000/api"
 
 # ----------------------------------------------------
-# LOGURU CONFIGURATION
+# LOGURU CONFIGURATION (CLEAN & TIDY FORMAT)
 # ----------------------------------------------------
 # 1. Clear default handlers
 logger.remove()
 
-# 2. Direct console logging strictly to stderr
-logger.add(
-    sys.stderr,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="DEBUG",
+# 2. Terminal Format: Clean, aligned, no emojis
+# 1. Custom format with Emojis and Colors
+terminal_format = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+    "<level>{level: <8}</level> | "
+    "📌 <cyan>{function}:{line}</cyan> - "
+    "<level>{message}</level>"
 )
 
-# 3. Direct file logging to disk (safe and isolated from stdio streams)
+# 2. Add handler to stderr with colorize enabled
+logger.add(
+    sys.stderr,
+    format=terminal_format,
+    level="INFO",
+    colorize=True,  # Enables colored output in terminal
+)
+
+# 4. Direct file logging (Detailed, plain text for disk)
 logger.add(
     "logs/mcp_activity.log",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {function}:{line} - {message}",
     rotation="5 MB",
     retention="7 days",
     level="INFO",
     enqueue=True,
 )
-
 
 
 # ----------------------------------------------------
@@ -45,10 +65,10 @@ def add_task(
     title: str, description: str = "", priority: str = "medium"
 ) -> str:
     """Add a new task via the FastAPI backend."""
-    logger.info(f"Received request to create task: '{title}' (Priority: {priority})")
+    logger.info(f"Creating task: '{title}' [Priority: {priority}]")
     now = datetime.now(timezone.utc).isoformat()
     task_id = str(int(time.time() * 1000))
-    
+
     payload = {
         "id": task_id,
         "title": title,
@@ -69,7 +89,7 @@ def add_task(
             f"{BASE_URL}/tasks", json=payload, timeout=5
         )
         response.raise_for_status()
-        logger.success(f"Task #{task_id} ('{title}') successfully created in backend.")
+        logger.success(f"Task #{task_id} ('{title}') created successfully.")
         return f"Task created successfully: {title}"
     except Exception as e:
         logger.error(f"Failed to create task '{title}': {str(e)}")
@@ -79,11 +99,11 @@ def add_task(
 @mcp.tool()
 def get_tasks() -> str:
     """Fetch all tasks from backend."""
-    logger.info("Fetching all tasks from backend...")
+    logger.info("Fetching tasks list from backend...")
     try:
         r = requests.get(f"{BASE_URL}/tasks", timeout=3)
         r.raise_for_status()
-        logger.info(f"Successfully retrieved tasks list.")
+        logger.info("Successfully retrieved tasks list.")
         return r.text
     except Exception as e:
         logger.error(f"Failed to fetch tasks: {str(e)}")
@@ -95,7 +115,7 @@ def update_task_status(
     task_id: str, status: str, description: str = ""
 ) -> str:
     """Update task status and description."""
-    logger.info(f"Request to update status for Task #{task_id} -> '{status}'")
+    logger.info(f"Updating Task #{task_id} status -> '{status}'")
     try:
         r = requests.get(f"{BASE_URL}/tasks", timeout=3)
         tasks = r.json()
@@ -130,7 +150,7 @@ def update_task_status(
             f"{BASE_URL}/tasks", json=target, timeout=3
         )
         res.raise_for_status()
-        logger.success(f"Task #{task_id} updated to status '{normalized_status}'.")
+        logger.success(f"Task #{task_id} status updated to '{normalized_status}'.")
         return f"Success: Task {task_id} updated to '{normalized_status}'."
     except Exception as e:
         logger.error(f"Failed to update Task #{task_id}: {str(e)}")
@@ -152,7 +172,7 @@ def update_task_details(
             (t for t in tasks if str(t.get("id")) == str(task_id)), None
         )
         if not target_task:
-            logger.warning(f"Task #{task_id} not found for updating details.")
+            logger.warning(f"Task #{task_id} not found for details update.")
             return f"Error: Task {task_id} not found."
 
         target_task["description"] = description
@@ -165,7 +185,7 @@ def update_task_details(
         )
         post_res.raise_for_status()
 
-        logger.success(f"Task #{task_id} details and subtasks updated.")
+        logger.success(f"Task #{task_id} details updated.")
         return f"Task {task_id} details updated with execution results."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to update details for Task #{task_id}: {str(e)}")
@@ -189,7 +209,9 @@ def approve_task(task_id: str) -> str:
             return f"Error: Task {task_id} not found."
 
         if target_task.get("status") not in ["needs_review", "Needs Review"]:
-            logger.warning(f"Task #{task_id} status is '{target_task.get('status')}', cannot approve.")
+            logger.warning(
+                f"Task #{task_id} status is '{target_task.get('status')}', cannot approve."
+            )
             return f"Task {task_id} cannot be approved because its status is '{target_task.get('status')}' (must be 'needs_review')."
 
         now = datetime.now(timezone.utc).isoformat()
@@ -209,7 +231,7 @@ def approve_task(task_id: str) -> str:
         )
         post_res.raise_for_status()
 
-        logger.success(f"Task #{task_id} successfully approved.")
+        logger.success(f"Task #{task_id} approved and completed.")
         return f"Task {task_id} ('{target_task.get('title')}') has been APPROVED and moved to 'completed'."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to approve Task #{task_id}: {str(e)}")
@@ -245,7 +267,7 @@ def bulk_approve_tasks() -> str:
                 approved_count += 1
 
         if approved_count == 0:
-            logger.info("No tasks were found in 'needs_review' status.")
+            logger.info("No tasks found in 'needs_review' status.")
             return "No tasks found in 'needs_review' status."
 
         logger.success(f"Bulk approved {approved_count} task(s).")
@@ -266,7 +288,7 @@ def delete_task(task_id: str) -> str:
             timeout=5,
         )
         response.raise_for_status()
-        logger.success(f"Task #{task_id} deleted.")
+        logger.success(f"Task #{task_id} deleted successfully.")
         return f"Task {task_id} deleted successfully."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to delete Task #{task_id}: {str(e)}")
@@ -274,5 +296,7 @@ def delete_task(task_id: str) -> str:
 
 
 if __name__ == "__main__":
+    logger.info("Starting MCP Server on http://127.0.0.1:8001/sse...")
+    mcp.settings.host = "127.0.0.1"
     mcp.settings.port = 8001
-    mcp.run(transport="stdio")
+    mcp.run(transport="sse")

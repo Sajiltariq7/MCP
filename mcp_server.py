@@ -21,7 +21,7 @@ logging.getLogger("mcp.server").setLevel(logging.WARNING)
 mcp = FastMCP("todo-list-server")
 
 # FastAPI base URL
-BASE_URL = "http://127.0.0.1:8000/api"
+BASE_URL = "http://127.0.0.1:8010/api"
 
 # ----------------------------------------------------
 # LOGURU CONFIGURATION (CLEAN & TIDY FORMAT)

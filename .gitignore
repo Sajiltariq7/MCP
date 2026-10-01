@@ -20,3 +20,6 @@ Thumbs.db
 
 # Databases
 app_activity.db
+
+# Logs
+logs/

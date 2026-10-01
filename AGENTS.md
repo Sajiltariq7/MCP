@@ -19,3 +19,7 @@ You operate as an AI assistant integrated with the task backend via the `todo-li
    *(Never jump directly from `Pending` to `Needs Review` or `Completed` without setting `In Progress` first to log `started_at` timestamps).*
 3. **Documenting Progress:** When marking tasks as `Needs Review`, you MUST provide details, notes, or execution results in the `description` or `subtasks` field.
 4. **Approval Step:** Finalize tasks into `Completed` by calling `approve_task` or `bulk_approve_tasks`.
+
+## MCP Tool Usage Guidelines
+- **Task Management:** ALWAYS use the `todo-list-server` MCP tools (`add_task`, `update_task`, `get_tasks`) to interact with tasks. Never send raw REST API requests or edit `tasks.db` directly unless explicitly asked.
+- **Mathematical Evaluation:** ALWAYS use the `calculator-server` MCP tool (`calculate`) to evaluate mathematical expressions. Never use local Python `eval()` or write custom inline math scripts.

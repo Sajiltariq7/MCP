@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 
 from database import init_db, get_db_connection, log_activity
+from logger_config import logger
 
 app = FastAPI(title="MCP Engine Backend")
 
@@ -19,6 +20,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    logger.info("[App] Startup: initializing database")
     init_db()
 
 class TaskModel(BaseModel):
@@ -38,6 +40,7 @@ class TaskModel(BaseModel):
 
 @app.get("/api/tasks")
 def get_tasks():
+    logger.info("[App] Fetching all tasks")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM tasks")
@@ -54,6 +57,7 @@ def get_tasks():
 
 @app.post("/api/tasks")
 def save_or_update_task(task: TaskModel):
+    logger.info(f"[App] Saving/updating task: {task.id}")
     conn = get_db_connection()
     cursor = conn.cursor()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -127,6 +131,7 @@ def save_or_update_task(task: TaskModel):
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str, actor: str = "USER"):
+    logger.info(f"[App] Deleting task: {task_id}")
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -148,6 +153,7 @@ def delete_task(task_id: str, actor: str = "USER"):
 
 @app.get("/api/audit")
 def get_audit_logs():
+    logger.info("[App] Fetching audit logs")
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM activity_logs ORDER BY timestamp DESC")

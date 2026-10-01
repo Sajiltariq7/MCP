@@ -4,58 +4,36 @@ import logging
 import sys
 import time
 
-from loguru import logger
+from logger_config import logger
 from mcp.server.fastmcp import FastMCP
 import requests
 
 # ----------------------------------------------------
 # SILENCE BACKGROUND HTTP & MCP SPAM
 # ----------------------------------------------------
+# Intercept standard logging through loguru (sys.stderr only)
+class InterceptHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            logger.info(f"[INTERCEPTED LOG] {msg}")
+        except Exception:
+            pass
+
 # Suppress standard Uvicorn access logs (POST /messages...) and MCP pings
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
-logging.getLogger("mcp").setLevel(logging.WARNING)
-logging.getLogger("mcp.server").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.CRITICAL)
+logging.getLogger("uvicorn.error").setLevel(logging.ERROR)
+logging.getLogger("mcp").setLevel(logging.CRITICAL)
+logging.getLogger("mcp.server").setLevel(logging.CRITICAL)
+# Bind standard logging to InterceptHandler
+logging.getLogger("uvicorn").handlers = [InterceptHandler()]
+logging.getLogger("mcp").handlers = [InterceptHandler()]
 
 # Instantiate FastMCP server
 mcp = FastMCP("todo-list-server")
 
 # FastAPI base URL
 BASE_URL = "http://127.0.0.1:8000/api"
-
-# ----------------------------------------------------
-# LOGURU CONFIGURATION (CLEAN & TIDY FORMAT)
-# ----------------------------------------------------
-# 1. Clear default handlers
-logger.remove()
-
-# 2. Terminal Format: Clean, aligned, no emojis
-# 1. Custom format with Emojis and Colors
-terminal_format = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-    "<level>{level: <8}</level> | "
-    "📌 <cyan>{function}:{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
-# 2. Add handler to stderr with colorize enabled
-logger.add(
-    sys.stderr,
-    format=terminal_format,
-    level="INFO",
-    colorize=True,  # Enables colored output in terminal
-)
-
-# 4. Direct file logging (Detailed, plain text for disk)
-logger.add(
-    "logs/mcp_activity.log",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {function}:{line} - {message}",
-    rotation="5 MB",
-    retention="7 days",
-    level="INFO",
-    enqueue=True,
-)
-
 
 # ----------------------------------------------------
 # MCP TOOLS WITH FUNCTIONAL LOGGING
@@ -65,6 +43,7 @@ def add_task(
     title: str, description: str = "", priority: str = "medium"
 ) -> str:
     """Add a new task via the FastAPI backend."""
+    logger.info(f"[MCP TOOL CALL] add_task -> args: {{'title': '{title}', 'description': '{description}', 'priority': '{priority}'}}")
     logger.info(f"Creating task: '{title}' [Priority: {priority}]")
     now = datetime.now(timezone.utc).isoformat()
     task_id = str(int(time.time() * 1000))
@@ -99,6 +78,7 @@ def add_task(
 @mcp.tool()
 def get_tasks() -> str:
     """Fetch all tasks from backend."""
+    logger.info("[MCP TOOL CALL] get_tasks -> args: {}")
     logger.info("Fetching tasks list from backend...")
     try:
         r = requests.get(f"{BASE_URL}/tasks", timeout=3)
@@ -115,6 +95,7 @@ def update_task_status(
     task_id: str, status: str, description: str = ""
 ) -> str:
     """Update task status and description."""
+    logger.info(f"[MCP TOOL CALL] update_task_status -> args: {{'task_id': '{task_id}', 'status': '{status}', 'description': '{description}'}}")
     logger.info(f"Updating Task #{task_id} status -> '{status}'")
     try:
         r = requests.get(f"{BASE_URL}/tasks", timeout=3)
@@ -162,6 +143,7 @@ def update_task_details(
     task_id: str, description: str, subtasks: list = None
 ) -> str:
     """Attach execution results, work notes, or subtask checklists to a task."""
+    logger.info(f"[MCP TOOL CALL] update_task_details -> args: {{'task_id': '{task_id}', 'description': '{description}'}}")
     logger.info(f"Updating details/subtasks for Task #{task_id}")
     try:
         get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
@@ -195,6 +177,7 @@ def update_task_details(
 @mcp.tool()
 def approve_task(task_id: str) -> str:
     """Approves a task in 'needs_review' and transitions it to 'completed'."""
+    logger.info(f"[MCP TOOL CALL] approve_task -> args: {{'task_id': '{task_id}'}}")
     logger.info(f"Attempting approval for Task #{task_id}")
     try:
         get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
@@ -241,6 +224,7 @@ def approve_task(task_id: str) -> str:
 @mcp.tool()
 def bulk_approve_tasks() -> str:
     """Approves all tasks currently sitting in 'needs_review' and moves them to 'completed'."""
+    logger.info("[MCP TOOL CALL] bulk_approve_tasks -> args: {}")
     logger.info("Executing bulk approval for tasks in 'needs_review'...")
     try:
         get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
@@ -280,6 +264,7 @@ def bulk_approve_tasks() -> str:
 @mcp.tool()
 def delete_task(task_id: str) -> str:
     """Delete a task via the FastAPI backend."""
+    logger.info(f"[MCP TOOL CALL] delete_task -> args: {{'task_id': '{task_id}'}}")
     logger.info(f"Request to delete Task #{task_id}")
     try:
         response = requests.delete(

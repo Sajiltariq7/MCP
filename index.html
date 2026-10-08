@@ -8,6 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
@@ -32,6 +33,39 @@
       <button onclick="openTaskModal()" class="btn-create-task my-6">
         <i class="fa-solid fa-plus text-xs"></i>
         <span class="text-sm">Create New Task</span>
+      </button>
+
+      <div class="my-3 px-3">
+        <label class="text-[10px] text-zinc-400 font-mono block mb-1">Week Overview</label>
+        <select id="weekOverviewSelect" class="modal-input text-xs mb-2" onchange="if(window.generateWeeklyPDF) generateWeeklyPDF()">
+          <option value="">Select Week</option>
+          <option value="1">Week 1</option>
+          <option value="2">Week 2</option>
+          <option value="3">Week 3</option>
+          <option value="4">Week 4</option>
+          <option value="5">Week 5</option>
+          <option value="6">Week 6</option>
+          <option value="7">Week 7</option>
+          <option value="8">Week 8</option>
+          <option value="9">Week 9</option>
+          <option value="10">Week 10</option>
+          <option value="11">Week 11</option>
+          <option value="12">Week 12</option>
+        </select>
+        <button onclick="generateDailyReport()" class="btn-create-task my-1 bg-amber-600 hover:bg-amber-700 w-full">
+          <i class="fa-solid fa-calendar-day text-xs"></i>
+          <span class="text-sm">Generate Daily Report</span>
+        </button>
+      </div>
+
+      <button onclick="openWeeklyGoalModal()" class="btn-create-task my-2 bg-red-700 hover:bg-red-800">
+        <i class="fa-solid fa-layer-group text-xs"></i>
+        <span class="text-sm">Decompose Weekly Goal</span>
+      </button>
+
+      <button onclick="generateWeeklyReport()" class="btn-create-task my-2 bg-amber-600 hover:bg-amber-700">
+        <i class="fa-solid fa-file-lines text-xs"></i>
+        <span class="text-sm">Generate Report</span>
       </button>
 
       <!-- Navigation Tabs -->
@@ -74,11 +108,13 @@
           <input type="text" id="searchInput" oninput="renderDashboard()" placeholder="Search tasks, tags..." class="search-input">
         </div>
       </div>
-      <div>
-        <button onclick="fetchTasks()" class="btn-refresh">
-          <i class="fa-solid fa-rotate-right text-zinc-400"></i>
+      <div class="header-actions" style="display: flex; gap: 8px; align-items: center;">
+        <button onclick="fetchTasks()" id="refreshBtn" class="btn btn-secondary">
+          <i class="fa-solid fa-sync-alt"></i>
           <span>Refresh Data</span>
         </button>
+        <button onclick="setViewMode('status')" id="statusViewBtn" class="btn view-btn active">STATUS VIEW</button>
+        <button onclick="setViewMode('daily')" id="dailyViewBtn" class="btn view-btn">DAILY VIEW (DAYS 1-5)</button>
       </div>
     </header>
 
@@ -91,14 +127,15 @@
           <h2 class="section-title">Task Overview</h2>
         </div>
 
-        <div class="kanban-grid">
+        <div id="statusBoard" class="board-container status-board-container" style="display: grid;">
+          <div class="kanban-grid">
           <!-- Column: Pending -->
           <div class="kanban-col col-pending">
             <div class="kanban-header">
               <span class="kanban-title">Pending</span>
               <span id="count-pending" class="kanban-count">0</span>
             </div>
-            <div id="col-pending" class="kanban-list"></div>
+            <div id="col-pending" class="kanban-list" ondragenter="handleDragEnter(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'PENDING')"></div>
           </div>
 
           <!-- Column: In Progress -->
@@ -107,7 +144,7 @@
               <span class="kanban-title">In Progress</span>
               <span id="count-progress" class="kanban-count">0</span>
             </div>
-            <div id="col-progress" class="kanban-list"></div>
+            <div id="col-progress" class="kanban-list" ondragenter="handleDragEnter(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'IN_PROGRESS')"></div>
           </div>
 
           <!-- Column: Needs Review -->
@@ -116,7 +153,7 @@
               <span class="kanban-title">Needs Review</span>
               <span id="count-review" class="kanban-count">0</span>
             </div>
-            <div id="col-review" class="kanban-list"></div>
+            <div id="col-review" class="kanban-list" ondragenter="handleDragEnter(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'NEEDS_REVIEW')"></div>
           </div>
 
           <!-- Column: Completed -->
@@ -125,10 +162,39 @@
               <span class="kanban-title">Completed</span>
               <span id="count-completed" class="kanban-count">0</span>
             </div>
-            <div id="col-completed" class="kanban-list"></div>
+            <div id="col-completed" class="kanban-list" ondragenter="handleDragEnter(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'COMPLETED')"></div>
           </div>
         </div>
+        </div>
       </section>
+
+      <div id="dailyBoard" class="board-container daily-board-container" style="display: none;">
+        <div class="mb-6">
+          <h2 class="section-title">Daily Tasks (Days 1-5)</h2>
+        </div>
+        <div id="daily-view-grid" class="grid grid-cols-5 gap-3 mb-6">
+          <div class="kanban-col bg-[#121318] border-zinc-800/80">
+            <div class="kanban-header border-b border-zinc-800"><span class="kanban-title">Day 1</span><span id="count-day1" class="kanban-count">0</span></div>
+            <div id="col-day1" class="kanban-list"></div>
+          </div>
+          <div class="kanban-col bg-[#121318] border-zinc-800/80">
+            <div class="kanban-header border-b border-zinc-800"><span class="kanban-title">Day 2</span><span id="count-day2" class="kanban-count">0</span></div>
+            <div id="col-day2" class="kanban-list bg-[#121318] border-zinc-800/80"></div>
+          </div>
+          <div class="kanban-col bg-[#121318] border-zinc-800/80">
+            <div class="kanban-header border-b border-zinc-800"><span class="kanban-title">Day 3</span><span id="count-day3" class="kanban-count">0</span></div>
+            <div id="col-day3" class="kanban-list"></div>
+          </div>
+          <div class="kanban-col bg-[#121318] border-zinc-800/80">
+            <div class="kanban-header border-b border-zinc-800"><span class="kanban-title">Day 4</span><span id="count-day4" class="kanban-count">0</span></div>
+            <div id="col-day4" class="kanban-list"></div>
+          </div>
+          <div class="kanban-col bg-[#121318] border-zinc-800/80">
+            <div class="kanban-header border-b border-zinc-800"><span class="kanban-title">Day 5</span><span id="count-day5" class="kanban-count">0</span></div>
+            <div id="col-day5" class="kanban-list"></div>
+          </div>
+        </div>
+      </div>
 
       <!-- VIEW 2: TASK TABLE MANAGER -->
       <section id="view-list" class="hidden view-section">
@@ -213,6 +279,20 @@
         </div>
 
         <div class="form-group">
+          <label class="form-label">Week Number (1-12)</label>
+          <input type="number" id="taskWeekNumberInput" min="1" max="12" value="1" class="modal-input">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Subtasks</label>
+          <div class="flex gap-2">
+            <input type="text" id="editSubtaskInput" placeholder="Enter subtask..." class="modal-input flex-1 text-xs" onkeydown="if(event.key==='Enter'){addSubtaskItem(); event.preventDefault();}">
+            <button onclick="addSubtaskItem()" class="btn-primary text-xs px-3">Add</button>
+          </div>
+          <div id="editSubtaskList" class="mt-2 space-y-1 max-h-40 overflow-y-auto custom-scrollbar"></div>
+        </div>
+
+        <div class="form-group">
           <label class="form-label">Due Date</label>
           <input type="date" id="taskDueDateInput" class="modal-input">
         </div>
@@ -220,7 +300,7 @@
 
       <div class="modal-footer">
         <button onclick="closeTaskModal()" class="btn-secondary">Cancel</button>
-        <button onclick="saveTask()" class="btn-primary">Save Task</button>
+        <button onclick="saveTask(event)" class="btn-primary">Save Task</button>
       </div>
     </div>
   </div>
@@ -239,11 +319,61 @@
         </button>
       </div>
 
+      <!-- Diagram URL Input -->
+      <div class="form-group mt-3">
+        <label class="form-label text-xs font-bold uppercase tracking-wider text-zinc-400">Daily Diagram / Mermaid URL</label>
+        <div class="flex gap-2">
+          <input type="text" id="diagramUrlInput" placeholder="Paste mermaid or diagram URL..." class="modal-input flex-1 text-xs" oninput="updateDiagramPreview(this.value)">
+          <button onclick="saveDiagramLink()" class="btn-primary text-xs px-3">Save Link</button>
+        </div>
+        <div id="diagramPreview" class="mt-2 text-xs"></div>
+      </div>
+
+      <!-- Subtasks Checklist -->
+        <div id="detail-subtasks-list" class="subtasks-section mt-4">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2">Task Overview</h4>
+        <div id="subtasksChecklist" class="space-y-1">
+          <!-- Dynamic subtasks render here -->
+        </div>
+      </div>
+
       <!-- Dynamic JS Content Target -->
       <div id="detailModalBody"></div>
 
       <div class="flex justify-end pt-2">
         <button onclick="closeDetailModal()" class="btn-refresh">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Weekly Goal Decomposition Modal -->
+  <div id="weeklyGoalModal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-layer-group text-blue-500 text-sm"></i> Decompose Weekly Goal</h3>
+        <button onclick="closeWeeklyGoalModal()" class="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body space-y-4">
+        <div class="form-group">
+          <label class="form-label">Week Number (1-12)</label>
+          <input type="number" id="weeklyWeekInput" min="1" max="12" value="1" class="modal-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Goal Title</label>
+          <input type="text" id="weeklyGoalInput" placeholder="Enter weekly goal..." class="modal-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Start Date (YYYY-MM-DD)</label>
+          <input type="date" id="weeklyStartInput" class="modal-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Goal Description</label>
+          <textarea id="weeklyGoalDescInput" rows="2" placeholder="Describe the weekly goal..." class="modal-textarea"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button onclick="closeWeeklyGoalModal()" class="btn-secondary">Cancel</button>
+        <button onclick="decomposeWeeklyGoal()" class="btn-primary">Decompose</button>
       </div>
     </div>
   </div>
@@ -273,8 +403,22 @@
 </div>
 
 
+  <!-- Weekly Report Preview Modal -->
+  <div id="reportModal" class="modal-overlay hidden">
+    <div class="modal-content bg-[#181920] border border-zinc-800">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-file-lines text-amber-500 text-sm"></i> Weekly Report</h3>
+        <button onclick="closeReportModal()" class="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div id="reportModalBody" class="modal-body text-xs text-zinc-200 font-mono space-y-2"></div>
+      <div class="modal-footer">
+        <button onclick="closeReportModal()" class="btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- JavaScript Scripts -->
   <script src="data.js"></script>
-  <script src="script.js"></script>
+  <script src="/static/script.js"></script>
 </body>
 </html>

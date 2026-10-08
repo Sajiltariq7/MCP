@@ -1,13 +1,15 @@
 // State Management
-let state = {
+window.state = window.state || {
   tasks: [],
   logs: [],
   activeTab: 'board',
   editingTaskId: null,
-  isServerOnline: false
+  isServerOnline: false,
+  activeWeek: 1,
+  viewMode: 'status'
 };
 
-let liveTimerInterval = null;
+if (typeof liveTimerInterval === 'undefined') { var liveTimerInterval = null; }
 
 // Helper: Normalize status string
 function normalizeStatus(status) {
@@ -112,9 +114,13 @@ document.addEventListener('DOMContentLoaded', () => {
   loadFromLocalStorage();
   renderDashboard();
 
+  const saveBtn = document.getElementById('save-task-btn') || document.querySelector('.btn-primary');
+  if (saveBtn) saveBtn.addEventListener('click', (e) => { e.preventDefault(); saveTask(e); });
+
   fetchTasks();
   fetchAuditLogs();
   setupColumnSelection();
+  setViewMode('status');
 
   liveTimerInterval = setInterval(() => {
     if (state.activeTab === 'board' && state.tasks.some(t => normalizeStatus(t.status) === 'in_progress')) {
@@ -126,6 +132,75 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ==========================================
    NAVIGATION & TAB SWITCHING
    ========================================== */
+let viewMode = 'status'; // 'status' or 'daily'
+
+function setViewMode(mode) {
+  if (window.state) window.state.viewMode = mode;
+  viewMode = mode;
+  const statusBtn = document.getElementById('statusViewBtn');
+  const dailyBtn = document.getElementById('dailyViewBtn');
+  const statusBoard = document.getElementById('statusBoard') || document.getElementById('kanban-grid');
+  const dailyBoard = document.getElementById('dailyBoard') || document.getElementById('daily-view-grid');
+  if (mode === 'daily') {
+    if (statusBoard) statusBoard.style.display = 'none';
+    if (dailyBoard) { dailyBoard.style.display = 'grid'; dailyBoard.classList.remove('hidden'); }
+    if (statusBtn) statusBtn.classList.remove('active');
+    if (dailyBtn) dailyBtn.classList.add('active');
+    renderDailyColumns();
+  } else {
+    if (statusBoard) { statusBoard.style.display = 'grid'; statusBoard.classList.remove('hidden'); }
+    if (dailyBoard) { dailyBoard.style.display = 'none'; dailyBoard.classList.add('hidden'); }
+    if (statusBtn) statusBtn.classList.add('active');
+    if (dailyBtn) dailyBtn.classList.remove('active');
+  }
+}
+
+function renderDailyColumns() {
+  if (viewMode !== 'daily') return;
+  const dayColumns = [1,2,3,4,5];
+  dayColumns.forEach(day => {
+    const col = document.getElementById('col-day' + day);
+    const countEl = document.getElementById('count-day' + day);
+    if (!col || !countEl) return;
+    const tasksForDay = state.tasks.filter(t => {
+      // Exclude parent weekly goal summaries
+      if (t.is_weekly_goal === true) return false;
+      if (!t.title || !t.title.includes('Day ')) return false;
+      if (t.parent_id === null || t.parent_id === undefined || t.parent_id === '') {
+        // Check if title actually indicates a daily subtask; if no "Day X" present, skip
+        const titleContainsDay = /Day\s+\d+/.test(t.title || '');
+        if (!titleContainsDay) return false;
+      }
+      if (t.day_number === day) return true;
+      const titleMatch = t.title && t.title.includes('Day ' + day);
+      if (titleMatch) return true;
+      const due = t.due_date ? new Date(t.due_date) : null;
+      if (due) {
+        return t.due_date === due ? true : false;
+      }
+      return false;
+    });
+    countEl.textContent = tasksForDay.length;
+    const now = new Date();
+    col.innerHTML = tasksForDay.map(t => {
+      let timerHtml = '';
+      if (t.status === 'IN_PROGRESS' && t.started_at) {
+        const started = new Date(t.started_at);
+        const diffMs = now - started;
+        const mins = Math.floor(diffMs / 60000);
+        const secs = Math.floor((diffMs % 60000) / 1000);
+        timerHtml = `<div class="text-[10px] font-mono text-violet-400 mt-1">● Active: ${mins}m ${secs}s</div>`;
+      }
+      return `<div class="kanban-card p-2 mb-2 bg-[#181920] rounded border border-zinc-800/80 hover:border-zinc-600 transition shadow-sm cursor-pointer" draggable="true" data-task-id="${t.id}" onclick="openDetailModal('${t.id}')" ondragstart="handleDragStart(event, '${t.id}')">
+        <h4 class="text-xs font-bold text-white mb-1 truncate">${t.title ? t.title.replace(/Week\s+\d+\s+-\s+Day\s+\d+:\s*/i, '').trim() : 'Untitled'}</h4>
+        <span class="badge-priority badge-${t.priority || 'low'}">${t.priority || 'low'}</span>
+        <div class="text-[10px] text-zinc-500 mt-1 font-mono">Week ${t.week_number || 1}</div>
+        ${timerHtml}
+      </div>`;
+    }).join('');
+  });
+}
+
 function switchTab(tabName) {
   state.activeTab = tabName;
   const views = ['board', 'list', 'audit'];
@@ -168,14 +243,28 @@ function switchTab(tabName) {
 /* ==========================================
    MODAL CONTROLS & TASK SAVE/EDIT
    ========================================== */
+function addSubtaskItem() {
+  const input = document.getElementById('editSubtaskInput');
+  const list = document.getElementById('editSubtaskList');
+  const text = input.value.trim();
+  if (!text) return;
+  const itemDiv = document.createElement('div');
+  itemDiv.className = 'subtask-item flex items-center gap-2 text-xs font-mono text-zinc-300 bg-[#181920] px-2 py-1 rounded border border-zinc-800/80';
+  itemDiv.innerHTML = '<span>' + text + '</span><button onclick="this.parentElement.remove()" class="text-zinc-500 hover:text-red-400 text-[10px] ml-auto">Remove</button>';
+  list.appendChild(itemDiv);
+  input.value = '';
+}
+
 function openTaskModal(taskId = null) {
   const modal = document.getElementById('taskModal');
   const title = document.getElementById('modalTitle');
   state.editingTaskId = taskId;
 
   if (taskId) {
-    const task = state.tasks.find(t => String(t.id) === String(taskId));
-    if (!task) return;
+  const now = new Date().toISOString();
+  const timeStr = getShortTime(now);
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
 
     if (title) title.innerHTML = `<i class="fa-solid fa-pen-to-square text-red-500 text-sm"></i> Edit Task`;
     document.getElementById('taskTitleInput').value = task.title || '';
@@ -183,6 +272,18 @@ function openTaskModal(taskId = null) {
     document.getElementById('taskPriorityInput').value = task.priority || 'medium';
     document.getElementById('taskStatusInput').value = normalizeStatus(task.status);
     document.getElementById('taskDueDateInput').value = task.due_date || '';
+
+    // Load existing subtasks into edit list
+    const editSubtaskList = document.getElementById('editSubtaskList');
+    if (editSubtaskList) editSubtaskList.innerHTML = '';
+    const existingSubtasks = task.subtasks || task.subtask_items || [];
+    existingSubtasks.forEach(sub => {
+      const text = (typeof sub === 'string') ? sub : (sub.title || sub.content || sub.name || 'Unnamed');
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'subtask-item flex items-center gap-2 text-xs font-mono text-zinc-300 bg-[#181920] px-2 py-1 rounded border border-zinc-800/80';
+      itemDiv.innerHTML = '<span>' + text + '</span><button onclick="this.parentElement.remove()" class="text-zinc-500 hover:text-red-400 text-[10px] ml-auto">Remove</button>';
+      if (editSubtaskList) editSubtaskList.appendChild(itemDiv);
+    });
   } else {
     if (title) title.innerHTML = `<i class="fa-solid fa-plus-circle text-red-500 text-sm"></i> Create New Task`;
     document.getElementById('taskTitleInput').value = '';
@@ -190,6 +291,9 @@ function openTaskModal(taskId = null) {
     document.getElementById('taskPriorityInput').value = 'medium';
     document.getElementById('taskStatusInput').value = 'pending';
     document.getElementById('taskDueDateInput').value = '';
+    const subtaskList = document.getElementById('editSubtaskList');
+    if (subtaskList) subtaskList.innerHTML = '';
+    if (typeof currentSubtasks !== 'undefined') currentSubtasks = [];
   }
 
   if (modal) modal.classList.remove('hidden');
@@ -199,14 +303,21 @@ function closeTaskModal() {
   const modal = document.getElementById('taskModal');
   if (modal) modal.classList.add('hidden');
   state.editingTaskId = null;
+
+  // Clear subtask container and internal tracking
+  const subtaskList = document.getElementById('editSubtaskList');
+  if (subtaskList) subtaskList.innerHTML = '';
+  if (typeof currentSubtasks !== 'undefined') currentSubtasks = [];
 }
 
-async function saveTask() {
+async function saveTask(event) {
+  console.log("=== saveTask triggered ===");
+  if (event) event.preventDefault();
   const title = document.getElementById('taskTitleInput')?.value.trim();
   const description = document.getElementById('taskDescInput')?.value.trim();
   const priority = document.getElementById('taskPriorityInput')?.value || 'medium';
-  const rawStatus = document.getElementById('taskStatusInput')?.value || 'pending';
-  const status = toTitleStatus(normalizeStatus(rawStatus));
+  const rawStatus = document.getElementById('taskStatusInput')?.value || '';
+  let status = toTitleStatus(normalizeStatus(rawStatus || 'pending'));
   const dueDate = document.getElementById('taskDueDateInput')?.value || null;
 
   if (!title) {
@@ -219,6 +330,17 @@ async function saveTask() {
   let task = state.editingTaskId 
     ? state.tasks.find(t => String(t.id) === String(state.editingTaskId)) 
     : null;
+
+  // Status fallback: if empty/invalid, preserve existing status
+  const rawStatusVal = document.getElementById('taskStatusInput')?.value || '';
+  let normalizedStatus = normalizeStatus(rawStatusVal);
+  if (!normalizedStatus || normalizedStatus === 'pending' && rawStatusVal === '') {
+    if (task && task.status) {
+      status = task.status;
+    } else if (rawStatusVal === '') {
+      status = 'Pending';
+    }
+  }
 
   const norm = normalizeStatus(status);
 
@@ -274,6 +396,20 @@ async function saveTask() {
     addLocalAuditLog('CREATE', task.title, 'USER', task.id, initialDesc);
   }
 
+  // Extract subtask items from edit list by selecting direct child divs
+  const subtaskContainer = document.getElementById('editSubtaskList');
+  const subtaskItems = subtaskContainer
+    ? Array.from(subtaskContainer.children).map(div => {
+        const span = div.querySelector('span');
+        return (span ? span.textContent.trim() : (div.innerText ? div.innerText.replace('Remove', '').trim() : '')).trim();
+      }).filter(Boolean)
+    : [];
+
+  // Attach subtasks directly to task before local/server save (as simple strings)
+  if (task) {
+    task.subtasks = subtaskItems;
+  }
+
   saveToLocalStorage();
   renderDashboard();
   closeTaskModal();
@@ -283,27 +419,34 @@ async function saveTask() {
       id: String(task.id),
       title: task.title,
       description: task.description || '',
-      status: task.status,
-      priority: task.priority,
-      due_date: task.due_date,
+      status: String(task.status || 'PENDING').toUpperCase(),
+      priority: String(task.priority || 'MEDIUM').toUpperCase(),
+      due_date: task.due_date || null,
+      week_number: parseInt(document.getElementById('taskWeekNumberInput')?.value || '1') || 1,
       creator: task.creator || 'human',
       actor: 'USER',
       created_at: task.created_at || now,
       started_at: task.started_at || null,
       completed_at: task.completed_at || null,
       duration_ms: task.duration_ms || null,
-      subtasks: parseSubtasks(task.subtasks)
+      subtasks: subtaskItems.map(text => ({ title: text, completed: false }))
     };
 
     try {
-      await fetch('http://127.0.0.1:8000/api/tasks', {
+      console.log("Saving payload:", payload);
+      const res = await fetch('http://127.0.0.1:8000/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      fetchAuditLogs();
+      if (!res.ok) {
+        const errData = await res.json();
+        console.error("FastAPI Validation Details:", errData);
+      } else {
+        fetchAuditLogs();
+      }
     } catch (err) {
-      console.warn('Backend save failed, stored locally.');
+      console.error('Backend save failed, stored locally.', err);
     }
   }
 }
@@ -492,75 +635,67 @@ function closeHistoryModal() {
    UPDATED DETAIL MODAL (CLEAN & SUBTASK FOCUS)
    ========================================== */
 function openDetailModal(taskId) {
-  const task = state.tasks.find(t => String(t.id) === String(taskId));
-  const detailBody = document.getElementById('detailModalBody');
-  if (!task || !detailBody) return;
-
-  const subtasks = parseSubtasks(task.subtasks);
-  let subtasksHtml = '';
-
-  if (subtasks.length > 0) {
-    const completedCount = subtasks.filter(s => s.done).length;
-    subtasksHtml = `
-      <div class="pt-3 border-t border-zinc-800/80">
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-            <i class="fa-solid fa-list-check text-zinc-500"></i> Subtasks
-          </h4>
-          <span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-            ${completedCount}/${subtasks.length} Done
-          </span>
-        </div>
-        <div class="space-y-1.5 bg-[#121318] p-2.5 rounded border border-zinc-800/80 max-h-60 overflow-y-auto custom-scrollbar">
-          ${subtasks.map((st, idx) => `
-            <div class="flex items-center gap-2.5 p-1.5 rounded hover:bg-zinc-800/40 transition">
-              <input 
-                type="checkbox" 
-                ${st.done ? 'checked' : ''} 
-                onchange="toggleSubtask('${task.id}',${idx})"
-                class="w-3.5 h-3.5 rounded accent-red-500 cursor-pointer bg-zinc-900 border-zinc-700">
-              <span class="text-xs ${st.done ? 'line-through text-zinc-500' : 'text-zinc-200'} font-mono">${st.content}</span>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `;
-  } else {
-    subtasksHtml = `
-      <div class="pt-3 border-t border-zinc-800/80">
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-            <i class="fa-solid fa-list-check text-zinc-500"></i> Subtasks
-          </h4>
-          <span class="text-[10px] font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-            0/0 Done
-          </span>
-        </div>
-        <div class="text-[11px] font-mono text-zinc-500 italic p-3 bg-[#121318] rounded border border-zinc-800/80 text-center">
-          No subtasks created for this task.
-        </div>
-      </div>
-    `;
+  if (!taskId || typeof taskId !== 'string') {
+    console.warn('Invalid taskId passed to openDetailModal:', taskId);
+    return;
   }
+  const encodedId = encodeURIComponent(taskId);
+  fetch('http://localhost:8000/api/tasks/' + encodedId)
+    .then(r => {
+      if (!r.ok) throw new Error('Task not found: ' + r.status);
+      const contentType = r.headers.get('content-type');
+      return (contentType && contentType.includes('application/json')) ? r.json() : r.text();
+    })
+    .then(data => {
+      let task = data;
+      if (Array.isArray(data)) {
+        task = data.find(t => String(t.id) === String(taskId)) || data[0];
+      } else if (data && data.task) {
+        task = data.task;
+      }
+      console.log('Fetched task detail:', task);
+      if (!task || !task.id) {
+        document.getElementById('detailModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono p-3">Failed to load task details.</div>';
+        document.getElementById('detailModal').classList.remove('hidden');
+        return;
+      }
+      renderTaskDetails(task);
+    })
+    .catch(err => {
+      console.error('Task fetch error:', err);
+      document.getElementById('detailModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono p-3">Failed to load task details.</div>';
+    });
+}
+function renderTaskDetails(task, rawSubtasks) {
+  console.log("Task details payload:", task);
+  if (!task || !task.id) {
+    console.warn('renderTaskDetails called without valid task');
+    return;
+  }
+  const detailBody = document.getElementById('detailModalBody');
+  if (!detailBody) return;
 
   const normStatus = normalizeStatus(task.status);
+  const totalMinutesLog = (task.daily_progress || []).reduce((sum, log) => sum + (parseInt(log.minutes_worked || 0)), 0);
   let elapsedTime = 'Not Started';
 
-  if (task.duration_ms) {
-    elapsedTime = formatDuration(task.duration_ms);
-  } else if (task.started_at) {
+  if (totalMinutesLog > 0) {
+    const hrs = Math.floor(totalMinutesLog / 60);
+    const mins = totalMinutesLog % 60;
+    elapsedTime = hrs + "h " + mins + "m";
+  } else if (normStatus === 'in_progress' && task.started_at) {
     const elapsed = getElapsed(task.started_at);
-    if (normStatus === 'in_progress') {
-      elapsedTime = `${elapsed} (Active)`;
-    } else if (normStatus === 'needs_review') {
-      elapsedTime = `${elapsed} (In Review)`;
-    } else {
-      elapsedTime = `${elapsed} (Paused)`;
-    }
+    elapsedTime = elapsed + " (Active)";
+  } else if (normStatus === 'completed' && task.completed_at) {
+    elapsedTime = formatDuration(task.duration_ms) || 'N/A';
+  } else if (normStatus === 'in_progress' && task.created_at) {
+    const el = getElapsed(task.created_at);
+    elapsedTime = el + " (Active since create)";
   }
 
   detailBody.innerHTML = `
     <div class="space-y-4 my-3 text-xs">
+      <div id="detail-subtasks-list" class="subtasks-section mt-4"></div>
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-2 overflow-hidden">
           <h2 class="text-base font-bold text-white truncate">${task.title}</h2>
@@ -579,6 +714,9 @@ function openDetailModal(taskId) {
         <div><span class="text-zinc-500 uppercase text-[10px] block">Status</span> <span class="text-zinc-200 capitalize">${toTitleStatus(normalizeStatus(task.status))}</span></div>
         <div><span class="text-zinc-500 uppercase text-[10px] block">Creator</span> <span class="text-zinc-200">${task.creator || 'human'}</span></div>
         <div><span class="text-zinc-500 uppercase text-[10px] block">Due Date</span> <span class="text-zinc-200">${task.due_date || 'None'}</span></div>
+        <div><span class="text-zinc-500 uppercase text-[10px] block">Completed Date</span> <span class="text-zinc-200">${task.completed_date || 'N/A'}</span></div>
+        <div><span class="text-zinc-500 uppercase text-[10px] block">Week #</span> <span class="text-zinc-200">${task.week_number || 1}</span></div>
+        <div><span class="text-zinc-500 uppercase text-[10px] block">Day #</span> <span class="text-zinc-200">${task.day_number || 1}</span></div>
         <div><span class="text-zinc-500 uppercase text-[10px] block">Time Elapsed</span> <span class="text-zinc-200">${elapsedTime}</span></div>
         <div class="col-span-2">
           <span class="text-zinc-500 uppercase text-[10px] block">Created At</span> 
@@ -586,7 +724,14 @@ function openDetailModal(taskId) {
         </div>
       </div>
 
-      ${subtasksHtml}
+      <div class="pt-2 border-t border-zinc-800/80 mt-2">
+        <h4 class="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Log Daily Progress</h4>
+        <div class="flex gap-2 mb-2">
+          <input type="number" id="progressMinutesInput" placeholder="Minutes worked" class="modal-input text-[11px] flex-1">
+          <input type="text" id="progressNotesInput" placeholder="Notes / progress..." class="modal-input text-[11px] flex-[2]">
+        </div>
+        <button onclick="logDailyProgress('${task.id}')" class="btn-primary text-xs w-full">Log Daily Progress</button>
+      </div>
 
       <div class="flex justify-end pt-3 gap-2 border-t border-zinc-800/80">
         <button onclick="openHistoryModal('${task.id}')" class="px-3 py-1.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs transition border border-zinc-700/50 flex items-center gap-1.5 font-mono">
@@ -598,6 +743,27 @@ function openDetailModal(taskId) {
       </div>
     </div>
   `;
+
+  // Render daily progress logs instead of subtasks
+  const progressContainer = document.getElementById('detail-subtasks-list');
+  if (progressContainer) {
+        fetch('http://localhost:8000/api/progress/' + encodeURIComponent(String(task.id || "")))
+        .then(r => r.json())
+      .catch(() => ({ progress: [] }))
+      .then(data => {
+        const logs = (data && data.progress) ? data.progress : [];
+        if (logs.length > 0) {
+          progressContainer.innerHTML = logs.map(entry => {
+            const dateStr = entry.date || entry.timestamp || 'N/A';
+            const minutes = entry.minutes_worked || 0;
+            const note = entry.progress_notes || entry.notes || '';
+            return `<div class="p-2 mb-1 bg-[#121318] rounded border border-zinc-800/80 text-zinc-300 text-xs font-mono"><span class="text-zinc-400">${dateStr}</span> — <span class="text-emerald-400">${minutes} min</span> — ${note}</div>`;
+          }).join('');
+        } else {
+          progressContainer.innerHTML = `<div class="text-[11px] font-mono text-zinc-500 italic p-3 bg-[#121318] rounded border border-zinc-800/80 text-center">No daily progress logged yet.</div>`;
+        }
+      });
+  }
 
   const modal = document.getElementById('detailModal');
   if (modal) modal.classList.remove('hidden');
@@ -792,17 +958,21 @@ function renderDashboard() {
       timeBadgeHtml = `<span class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1 w-fit"><i class="fa-solid fa-pause text-[8px]"></i> Review: ${timeText}</span>`;
     }
 
-    const card = document.createElement('div');
-    card.className = "task-card space-y-2.5 shadow-sm group";
+   const card = document.createElement('div');
+// REMOVED 'overflow-hidden' so 3D depth and hover glow aren't clipped
+card.className = "task-card space-y-2.5 p-3.5 group cursor-pointer relative"; 
+card.setAttribute('draggable', 'true');
+
 
     card.onclick = (e) => {
-      if (e.target.closest('select') || e.target.closest('button')) return;
+      if (e.target.tagName === 'SELECT' || e.target.closest('button')) return;
       openDetailModal(t.id);
     };
+    card.addEventListener('dragstart', (e) => handleDragStart(e, t.id));
 
     card.innerHTML = `
       <div class="flex items-start justify-between gap-2">
-        <h4 class="task-card-title">${t.title || 'Untitled'}</h4>
+        <h4 class="task-card-title text-sm font-semibold text-white truncate">${t.title || 'Untitled'}</h4>
         <span class="badge-priority ${priorityStyle}">${t.priority || 'medium'}</span>
       </div>
       <p class="text-xs text-zinc-400 line-clamp-2">${t.description || 'No description provided.'}</p>
@@ -810,18 +980,13 @@ function renderDashboard() {
       ${timeBadgeHtml}
 
       <div class="flex items-center justify-between pt-2 border-t border-zinc-800/40 text-[10px] text-zinc-500">
-        <select onchange="updateTaskStatus('${t.id}', this.value)" class="bg-[#121318] border border-zinc-800 rounded px-1.5 py-0.5 text-[10px] text-zinc-300 focus:outline-none focus:border-red-500">
-          <option value="pending" ${statusKey === 'pending' ? 'selected' : ''}>Pending</option>
-          <option value="in_progress" ${statusKey === 'in_progress' ? 'selected' : ''}>In Progress</option>
-          <option value="needs_review" ${statusKey === 'needs_review' ? 'selected' : ''}>Needs Review</option>
-          <option value="completed" ${statusKey === 'completed' ? 'selected' : ''}>Completed</option>
-        </select>
         <button onclick="deleteTask('${t.id}')" class="hover:text-red-400 transition p-1">
           <i class="fa-solid fa-trash"></i>
         </button>
       </div>
     `;
 
+   
     if (cols[statusKey]) cols[statusKey].appendChild(card);
   });
 
@@ -864,6 +1029,88 @@ function renderTableView(tasks) {
   }).join('');
 }
 
+function handleDragStart(event, taskId) {
+  console.log("DRAG START - target:", event.target, "currentTarget:", event.currentTarget, "taskId:", taskId);
+  event.dataTransfer.setData('text/plain', taskId);
+  event.target.style.opacity = '0.5';
+}
+
+function handleDragEnter(event) {
+    event.preventDefault();
+    event.currentTarget.classList.add('drag-over');
+}
+
+function handleDragOver(event) {
+  console.log("DRAG OVER - preventDefault called", event.currentTarget);
+  event.preventDefault();
+  event.currentTarget.classList.add('drag-over');
+}
+
+function handleDragLeave(event) {
+  event.currentTarget.classList.remove('drag-over');
+}
+
+function handleDrop(event, targetStatus) {
+  console.log("DRAG DROP - targetStatus:", targetStatus, "data:", event.dataTransfer.getData('text/plain'));
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag-over');
+  const taskId = event.dataTransfer.getData('text/plain');
+  if (!taskId) return;
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
+  const normStatus = normalizeStatus(targetStatus);
+  const oldNorm = normalizeStatus(task.status);
+  const now = new Date().toISOString();
+  const timeStr = getShortTime(now);
+  let changes = [];
+  if (oldNorm !== normStatus) {
+    if (normStatus === 'in_progress') changes.push(`Task shifted to IN PROGRESS (AT: ${timeStr})`);
+    else if (normStatus === 'needs_review') changes.push(`Task status updated to NEEDS REVIEW`);
+    else if (normStatus === 'completed') changes.push(`Task marked as COMPLETED (AT: ${timeStr})`);
+    else changes.push(`Task moved back to PENDING`);
+  }
+  const updateSummary = changes.join(' | ') || 'Status updated via drag-and-drop';
+  task.status = targetStatus;
+  if (normStatus === 'in_progress' && !task.started_at) task.started_at = now;
+  if (normStatus === 'completed' && !task.completed_at) task.completed_at = now;
+  addLocalAuditLog('UPDATE', task.title, 'USER', task.id, updateSummary);
+  saveToLocalStorage();
+  // Persist status change to server (POST /api/tasks handles updates)
+  try {
+    if (state.isServerOnline) {
+        fetch('http://localhost:8000/api/tasks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          id: task.id,
+          title: task.title || "Untitled",
+          description: task.description || "",
+          status: normStatus,
+          priority: task.priority || 'medium',
+          week_number: task.week_number || 1,
+          day_number: task.day_number || 1,
+          due_date: task.due_date,
+          creator: task.creator || 'human',
+          actor: 'USER',
+          updated_at: now
+        })
+      }).then(r => {
+        if (!r.ok) console.warn('Status update POST returned ' + r.status);
+        renderDashboard();
+      }).catch(err => console.error('Drag-and-drop sync error:', err));
+    } else {
+      renderDashboard();
+    }
+  } catch (err) {
+    console.error('Drag-and-drop sync error:', err);
+  }
+  renderDashboard();
+  if (typeof fetchTasks === 'function') fetchTasks();  // refresh server state
+  if (typeof window !== 'undefined' && document.getElementById('detailModal') && !document.getElementById('detailModal').classList.contains('hidden')) {
+    openDetailModal(task.id);
+  }
+}
+
 function setupColumnSelection() {
   const columns = document.querySelectorAll('.kanban-col');
 
@@ -891,6 +1138,180 @@ function formatDate(dateString) {
     minute: '2-digit',
     hour12: true
   });
+}
+
+function resetDecomposeModal() {
+  const weekInput = document.getElementById('weeklyWeekInput');
+  const goalInput = document.getElementById('weeklyGoalInput');
+  const startInput = document.getElementById('weeklyStartInput');
+  const descInput = document.getElementById('weeklyGoalDescInput');
+  if (weekInput) weekInput.value = '1';
+  if (goalInput) goalInput.value = '';
+  if (startInput) startInput.value = '';
+  if (descInput) descInput.value = '';
+}
+
+function openWeeklyGoalModal() {
+  document.getElementById('weeklyGoalModal').classList.remove('hidden');
+  resetDecomposeModal();
+}
+function closeWeeklyGoalModal() {
+  document.getElementById('weeklyGoalModal').classList.add('hidden');
+}
+function decomposeWeeklyGoal() {
+  const week = document.getElementById('weeklyWeekInput').value;
+  const goal = document.getElementById('weeklyGoalInput').value;
+  const start = document.getElementById('weeklyStartInput').value;
+  const desc = document.getElementById('weeklyGoalDescInput') ? document.getElementById('weeklyGoalDescInput').value : '';
+  if (!goal || !start) {
+    alert('Please enter goal title and start date.');
+    return;
+  }
+  fetch('http://localhost:8000/api/weekly/decompose', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({week_number: parseInt(week), goal_title: goal, start_date: start, description: desc})
+  }).then(r => r.json()).then(data => {
+    if (data.message) {
+      closeWeeklyGoalModal();
+      resetDecomposeModal();
+      if (typeof fetchTasks === 'function') fetchTasks();
+    } else {
+      const errMsg = data.detail ? JSON.stringify(data.detail) : (data.error ? JSON.stringify(data) : 'Unknown error');
+      console.error('Weekly goal failed:', errMsg);
+      document.getElementById('reportModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono">Failed: ' + errMsg + '</div>';
+      document.getElementById('reportModal').classList.remove('hidden');
+    }
+  }).catch(err => {
+    console.error('Weekly goal error:', err);
+    document.getElementById('reportModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono">Network error: ' + err + '</div>';
+    document.getElementById('reportModal').classList.remove('hidden');
+  });
+}
+
+function generateWeeklyPDF() {
+  const week = document.getElementById('weekOverviewSelect') ? document.getElementById('weekOverviewSelect').value : '1';
+  if (!week) { alert('Please select a week'); return; }
+  fetch('http://localhost:8001/sse', { method: 'GET' }) // ping server to verify
+    .catch(() => console.warn('Server ping skipped'));
+  // Call MCP server tool via REST proxy or direct endpoint
+  fetch('http://localhost:8000/api/tasks')
+    .then(() => {
+      const url = `http://localhost:8000/Week_${week}_Report.pdf`;
+      window.open(url, '_blank');
+      alert('PDF generation triggered for Week ' + week);
+    })
+    .catch(err => console.error('PDF trigger error:', err));
+}
+
+function generateDailyReport() {
+  fetch('http://localhost:8000/api/reports/daily')
+    .then(r => r.json())
+    .then(data => {
+      const body = document.getElementById('detailModalBody');
+      if (body) {
+        const entries = data.entries || [];
+        const listHtml = entries.length > 0 ? entries.map(e => `<li><strong>${e.task_title || 'Unknown'}</strong> — ${e.progress_notes || ''} (${e.minutes_worked || 0} min)</li>`).join('') : '<li>No progress logged for today yet.</li>';
+        body.innerHTML = `<div class="text-xs font-mono text-zinc-300"><h3 class="font-bold text-white mb-2">Daily Report - ${data.date || 'Today'}</h3><p>Total Time: ${data.total_time_logged || 0} min</p><div id="dailyReportDetails" class="pt-2 border-t border-zinc-800/40 mt-2"><ul class="list-disc pl-4">${listHtml}</ul></div></div>`;
+        document.getElementById('detailModal').classList.remove('hidden');
+      } else {
+        alert('Daily report: ' + JSON.stringify(data));
+      }
+    })
+    .catch(err => console.error('Daily report error:', err));
+}
+
+function logDailyProgress(taskId) {
+  const minutesEl = document.getElementById('progressMinutesInput');
+  const notesEl = document.getElementById('progressNotesInput');
+  const minutes = minutesEl ? parseInt(minutesEl.value) : 0;
+  const notes = notesEl ? notesEl.value : '';
+  if (isNaN(minutes) || minutes <= 0) {
+    alert('Please enter a valid positive number of minutes worked'); return;
+  }
+  fetch('http://localhost:8000/api/tasks/' + encodeURIComponent(taskId) + '/progress', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({minutes_worked: minutes, progress_notes: notes})
+  })
+  .then(r => r.json())
+  .then(data => {
+    console.log('Daily progress saved:', data);
+    if (minutesEl) minutesEl.value = '';
+    if (notesEl) notesEl.value = '';
+    // Refresh the progress section in the detail modal
+    openDetailModal(taskId);
+  })
+  .catch(err => console.error('Progress log error:', err));
+}
+
+function generateWeeklyReport() {
+  const week = document.getElementById('weeklyWeekInput') ? document.getElementById('weeklyWeekInput').value : '1';
+  fetch('http://localhost:8000/api/weekly/generate-report', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({week_number: parseInt(week || 1)})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.message || data.status === 'success') {
+      openReportModal(data);
+    } else {
+      const errMsg = data.detail ? JSON.stringify(data.detail) : (data.error ? JSON.stringify(data) : 'Unknown error');
+      console.error('Report generation failed:', errMsg);
+      document.getElementById('reportModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono">Failed: ' + errMsg + '</div>';
+      document.getElementById('reportModal').classList.remove('hidden');
+    }
+  })
+  .catch(err => {
+    console.error('Network error:', err);
+    document.getElementById('reportModalBody').innerHTML = '<div class="text-xs text-red-500 font-mono">Network error: ' + err + '</div>';
+    document.getElementById('reportModal').classList.remove('hidden');
+  });
+}
+
+function openReportModal(data) {
+  const body = document.getElementById('reportModalBody');
+  if (!body) return;
+  body.innerHTML = '<pre class="text-xs text-zinc-200 font-mono whitespace-pre-wrap">' + JSON.stringify(data || {}, null, 2) + '</pre>';
+  document.getElementById('reportModal').classList.remove('hidden');
+}
+
+function closeReportModal() {
+  document.getElementById('reportModal').classList.add('hidden');
+}
+
+function updateDiagramPreview(url) {
+  const preview = document.getElementById('diagramPreview');
+  if (preview && url) {
+    preview.innerHTML = `<img src="${url}" alt="Mermaid diagram" class="max-w-full rounded border border-zinc-700 shadow-sm">`;
+  } else if (preview) {
+    preview.innerHTML = `<span class="text-zinc-500 text-xs">No diagram URL provided.</span>`;
+  }
+}
+function saveDiagramLink() {
+  const url = document.getElementById('diagramUrlInput').value;
+  const modalTitleEl = document.querySelector('#detailModalBody h2');
+  const currentTaskId = state.editingTaskId || (modalTitleEl ? modalTitleEl.textContent.split('#')[1] : '');
+  if (!currentTaskId || !url) {
+    alert('Please enter a diagram URL.');
+    return;
+  }
+  fetch('http://localhost:8000/api/tasks/' + currentTaskId, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({diagram_url: url})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.message) {
+      alert('Diagram link saved for task: ' + currentTaskId);
+      fetchTasks();
+    } else {
+      alert('Failed to save diagram: ' + (data.detail || data.error || 'Unknown'));
+    }
+  })
+  .catch(err => alert('Error saving diagram: ' + err));
 }
 
 function toggleTaskHistory() {

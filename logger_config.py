@@ -4,6 +4,6 @@ from loguru import logger
 logger.remove()
 logger.add(
     sys.stderr,
-    format="{time} | {level} | [App] {message}",
+    format="{time} | {level} | {message}",
     level="INFO",
 )

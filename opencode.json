@@ -3,7 +3,8 @@
   "mcp": {
     "todo-list-server": {
       "type": "remote",
-      "url": "http://127.0.0.1:8001/sse"
+      "url": "http://127.0.0.1:8001/sse",
+      "enabled": true
     },
     "calculator-server": {
       "type": "local",

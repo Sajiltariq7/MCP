@@ -303,20 +303,62 @@ body::selection {
 .kanban-list {
   flex: 1 1 0%;
   overflow-y: auto;
+  overflow-x: visible; /* Prevents 3D side clipping */
+  perspective: 1000px;
+  perspective-origin: center center;
+  padding: 8px 6px; /* Provides essential breathing room for the 3D lift */
+  transform-style: preserve-3d;
 }
 
+
+/* 3D Interactive Card Base */
 .task-card {
+  --card-glow: rgba(22, 163, 127, 0.4);
+  position: relative;
   background-color: #181920;
-  border: 1px solid rgba(39, 39, 42, 0.8);
-  border-radius: 0.5rem;
-  padding: 0.75rem;
-  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.75rem;
+  padding: 0.875rem;
+  margin-bottom: 1rem;
   cursor: pointer;
-  margin-bottom: 0.75rem;
+  
+  /* Explicit 3D Context */
+  transform-style: preserve-3d !important;
+  backface-visibility: hidden;
+  will-change: transform, box-shadow;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), 
+              box-shadow 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), 
+              border-color 0.25s ease;
+  box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.6);
 }
 
+/* Top Accent Bar (Report Metric Card Style) */
+.task-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-top-left-radius: 0.75rem;
+  border-top-right-radius: 0.75rem;
+  background: linear-gradient(90deg, #530a0a, #7a1010);
+  opacity: 0.7;
+  transition: opacity 0.25s ease;
+  transform: translateZ(2px); /* Lifts top bar forward in 3D space */
+}
+
+/* Hover 3D Tilt, Elevation, and Glow */
 .task-card:hover {
-  border-color: rgba(239, 68, 68, 0.4);
+  transform: translateY(-3px) scale(1.01) !important;
+  border-color: rgba(185, 28, 28, 0.63) !important;
+  box-shadow: 0 4px 20px -2px rgba(185, 28, 28, 0.562), 0 0 0 1px rgba(185, 28, 28, 0.452) !important;
+  z-index: 50 !important;
+  transition: all 0.25s ease-in-out;
+}
+
+.task-card:hover::before {
+  opacity: 1;
 }
 
 .task-card-title {
@@ -324,12 +366,12 @@ body::selection {
   font-size: 0.75rem;
   color: #f4f4f5;
   transition: color 0.2s ease;
+  transform: translateZ(5px); /* Pops text forward */
 }
 
 .task-card:hover .task-card-title {
-  color: #f87171;
+  color: #fa8585;
 }
-
 /* Priority Badges */
 .badge-priority {
   font-size: 9px;
@@ -586,6 +628,17 @@ body::selection {
 }
 
 
+.report-modal-card, #reportModal .modal-content {
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#reportModalBody pre {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 96vh;
+}
+
 /* Optional: remove bottom border on the last log item so it doesn't overlap container radius */
 .audit-logs > div:last-child {
   border-bottom: none !important;
@@ -668,4 +721,50 @@ body::selection {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
+}
+
+/* View Toggle Buttons */
+.view-btn {
+  background-color: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.view-btn:hover {
+  background-color: #3f3f46;
+  border-color: #52525b;
+}
+
+.view-btn.active {
+  background-color: #991b1b !important;
+  color: #ffffff !important;
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.25);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0d1117;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b333f;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #30363d;
 }

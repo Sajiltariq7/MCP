@@ -258,8 +258,7 @@ def generate_html(data):
       <div class="sub-header-stats">Overall Task Completion Rate: {data['completion_rate']}%  |  Total System Actions: {data['total_actions']}</div>
     </div>
     <div class="sub-header-right">
-      <span class="badge-week">Week {data.get('week_number', 1)}</span>
-      <span class="badge-date">{datetime.now(timezone.utc).strftime('%b %d, %Y')}</span>
+      <span class="badge-week">Week {data['week_number']}</span>
     </div>
   </div>
 
@@ -282,7 +281,7 @@ def generate_html(data):
     </div>
     <div class="metric-card purple">
       <div class="metric-title">Time Logged</div>
-      <div class="metric-value">{data['total_hours']} h</div>
+      <div class="metric-value">34.3 h</div>
       <div class="metric-sub">2,060 min across 5 days</div>
     </div>
   </div>

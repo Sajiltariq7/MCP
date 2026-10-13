@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Taskboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%23ffe08a'/%3E%3Cg stroke='%2307112a' stroke-width='5' stroke-linejoin='round'%3E%3Crect x='22' y='18' width='56' height='70' rx='11' fill='%23b4c8ff'/%3E%3Crect x='37' y='11' width='26' height='13' rx='5' fill='%23ffe08a'/%3E%3Cellipse cx='41' cy='48' rx='7' ry='8' fill='%23fff'/%3E%3Cellipse cx='59' cy='48' rx='7' ry='8' fill='%23fff'/%3E%3C/g%3E%3Ccircle cx='42.5' cy='49.5' r='3.5' fill='%2307112a'/%3E%3Ccircle cx='57.5' cy='49.5' r='3.5' fill='%2307112a'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="bar"><div class="wrap bar-inner">
+  <span class="brand"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#tick"/></svg><span class="brand-name">Taskboard</span></span>
+  <span class="bar-break" aria-hidden="true"></span>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Views" style="--tabs: 5; --i: 0">
+    <span class="tabs-pill" aria-hidden="true"></span>
+    <button class="tab" role="tab" id="nav-board" aria-selected="true" aria-controls="view-board" onclick="switchTab('board')">Board</button>
+    <button class="tab" role="tab" id="nav-list" aria-selected="false" aria-controls="view-list" tabindex="-1" onclick="switchTab('list')">Manager</button>
+    <button class="tab" role="tab" id="nav-audit" aria-selected="false" aria-controls="view-audit" tabindex="-1" onclick="switchTab('audit')">Activity</button>
+    <button class="tab" role="tab" id="nav-report" aria-selected="false" aria-controls="view-report" tabindex="-1" onclick="switchTab('report')">Report</button>
+    <button class="tab" role="tab" id="nav-agents" aria-selected="false" aria-controls="view-agents" tabindex="-1" onclick="switchTab('agents')">Agents <span class="count" id="n-agents" aria-label="connected agents">0</span></button>
+  </div>
+  <div class="search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+    <input type="search" id="searchInput" class="input" aria-label="Search tasks" oninput="renderDashboard()" placeholder="Search tasks…"></div>
+  <div class="bar-actions">
+    <span id="api-status" class="status" role="status"><span class="live-dot" aria-hidden="true"></span>Connecting…</span>
+    <button class="btn btn-sm btn-round" onclick="fetchTasks(); fetchAuditLogs()" aria-label="Refresh data"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i></button>
+    <button class="btn btn-primary btn-sm" onclick="openTaskModal()"><i class="fa-solid fa-plus" aria-hidden="true"></i> New task</button>
+  </div>
+</div></header>
+
+<main id="main" class="wrap">
+  <section class="hero" aria-label="Summary">
+    <div class="hero-talk pop">
+      <svg class="bob" viewBox="0 0 100 100" aria-hidden="true"><use href="#tick"/></svg>
+      <p class="bubble" id="mascot-line">I'm Tick. I keep this board honest.</p>
+    </div>
+    <div class="hero-progress pop-late">
+      <span id="progress-label">0 of 0 tasks completed</span>
+      <div class="meter" id="progress-meter" role="progressbar" aria-labelledby="progress-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span style="--value: 0%"></span></div>
+    </div>
+  </section>
+
+  <!-- VIEW 1: KANBAN BOARD -->
+  <section id="view-board" role="tabpanel" aria-labelledby="nav-board">
+    <div class="section-head"><h1>The board</h1><p>Drag a card to another column to change its status.</p></div>
+    <div class="board">
+      <div class="col" data-status="pending">
+        <div class="col-head"><span class="emblem" style="--tone: var(--p1)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-wait"/></svg></span><h2>Pending</h2><span id="count-pending" class="count">0</span></div>
+        <div id="col-pending" class="col-list"></div>
+      </div>
+      <div class="col" data-status="in_progress">
+        <div class="col-head"><span class="emblem" style="--tone: var(--p2)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-go"/></svg></span><h2>In progress</h2><span id="count-progress" class="count">0</span></div>
+        <div id="col-progress" class="col-list"></div>
+      </div>
+      <div class="col" data-status="needs_review">
+        <div class="col-head"><span class="emblem" style="--tone: var(--p4)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-review"/></svg></span><h2>Needs review</h2><span id="count-review" class="count">0</span></div>
+        <div id="col-review" class="col-list"></div>
+      </div>
+      <div class="col" data-status="completed">
+        <div class="col-head"><span class="emblem" style="--tone: var(--p3)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-done"/></svg></span><h2>Completed</h2><span id="count-completed" class="count">0</span></div>
+        <div id="col-completed" class="col-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VIEW 2: TASK TABLE -->
+  <section id="view-list" class="hidden" role="tabpanel" aria-labelledby="nav-list">
+    <div class="section-head"><h1>Task manager</h1><p>Every task in one table. Click a row for details.</p></div>
+    <div class="paper table-paper"><div class="table-scroll">
+      <table>
+        <thead><tr><th>Task</th><th>Status</th><th>Creator</th><th>Duration</th><th class="actions">Actions</th></tr></thead>
+        <tbody id="task-table-body"></tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <!-- VIEW 3: ACTIVITY LOG (filter by who did it) -->
+  <section id="view-audit" class="hidden" role="tabpanel" aria-labelledby="nav-audit">
+    <div class="section-head">
+      <div><h1>Activity</h1><p>Everything people and the AI agent did, newest first.</p></div>
+      <div class="tabs" id="activity-filter" role="group" aria-label="Show activity from" style="--tabs: 3; --i: 0">
+        <span class="tabs-pill" aria-hidden="true"></span>
+        <button class="tab" aria-pressed="true" onclick="setActivityFilter('all')">All <span class="count" id="n-all">0</span></button>
+        <button class="tab" aria-pressed="false" onclick="setActivityFilter('agent')"><i class="fa-solid fa-robot" aria-hidden="true"></i> Agent <span class="count" id="n-agent">0</span></button>
+        <button class="tab" aria-pressed="false" onclick="setActivityFilter('human')"><i class="fa-solid fa-user" aria-hidden="true"></i> Human <span class="count" id="n-human">0</span></button>
+      </div>
+    </div>
+    <div class="paper"><ol id="audit-log-container" class="timeline"></ol></div>
+  </section>
+  <!-- VIEW 4: REPORT (JSON for an agent to write the report from) -->
+  <section id="view-report" class="hidden" role="tabpanel" aria-labelledby="nav-report">
+    <div class="section-head">
+      <div><h1>Report</h1><p>Pick a day or a week, then give the JSON to your agent and ask it to write the report.</p></div>
+    </div>
+    <div class="paper stack">
+      <div class="row report-controls">
+        <div class="tabs" id="report-mode" role="group" aria-label="Report period" style="--tabs: 2; --i: 0">
+          <span class="tabs-pill" aria-hidden="true"></span>
+          <button class="tab" aria-pressed="true" onclick="setReportMode('day')">Day</button>
+          <button class="tab" aria-pressed="false" onclick="setReportMode('week')">Week</button>
+        </div>
+        <input type="date" id="report-date" class="input" aria-label="Report date" onchange="renderReport()">
+        <b id="report-label"></b>
+        <span class="report-actions">
+          <button class="btn btn-sm" onclick="downloadReport()"><i class="fa-solid fa-download" aria-hidden="true"></i> Download .json</button>
+          <button class="btn btn-sm btn-primary" onclick="copyText(JSON.stringify(state.report, null, 2), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy JSON</button>
+        </span>
+      </div>
+      <div class="tiles" id="report-tiles"></div>
+      <p class="hint soft">Prompt to use with it: <code>Write the report from this JSON. Follow instructions_for_llm exactly.</code></p>
+      <pre class="code report-json" id="report-json"></pre>
+    </div>
+  </section>
+
+  <!-- VIEW 4: AGENTS (MCP connections + API key) -->
+  <section id="view-agents" class="hidden" role="tabpanel" aria-labelledby="nav-agents">
+    <div class="section-head">
+      <div><h1>Agents</h1><p>AI agents connected to the MCP server at <code>http://127.0.0.1:8001/sse</code></p></div>
+      <span id="mcp-status" class="status" role="status">Checking MCP server…</span>
+    </div>
+    <div class="two-col">
+      <div class="paper stack">
+        <h2>Connected agents</h2>
+        <ul id="agent-list" class="agent-list"></ul>
+      </div>
+      <div class="paper stack">
+        <h2>API key</h2>
+        <p class="soft">Every agent must send this key to connect. Rotating it cuts off every agent until it uses the new key.</p>
+        <code class="code" id="api-key">Loading…</code>
+        <div class="row">
+          <button class="btn btn-sm" id="key-toggle" onclick="toggleKey()"><i class="fa-solid fa-eye" aria-hidden="true"></i> Show</button>
+          <button class="btn btn-sm" onclick="copyText(state.apiKey, this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy key</button>
+          <button class="btn btn-sm btn-warn" onclick="rotateKey()"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Rotate key</button>
+        </div>
+        <hr class="divider">
+        <h3>Connect an agent</h3>
+        <div class="field">
+          <b>opencode: add to <code>opencode.json</code> under <code>mcp</code></b>
+          <pre class="code" id="snippet-opencode"></pre>
+          <button class="btn btn-sm" onclick="copyText(opencodeSnippet(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy config</button>
+        </div>
+        <div class="field">
+          <b>Claude Code: run in a terminal</b>
+          <pre class="code" id="snippet-claude"></pre>
+          <button class="btn btn-sm" onclick="copyText(claudeSnippet(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy command</button>
+        </div>
+        <p class="hint soft">Want a custom name on this page? Also send an <code>X-Agent-Name</code> header.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- MODAL: CREATE / EDIT TASK -->
+<div id="taskModal" class="modal hidden" onclick="if (event.target === this) closeTaskModal()">
+  <form class="paper modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle" onsubmit="event.preventDefault(); saveTask()">
+    <div class="modal-head">
+      <h2 id="modalTitle">New task</h2>
+      <button type="button" class="btn btn-round btn-sm" onclick="closeTaskModal()" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="field"><label for="taskTitleInput">Title</label><input class="input" id="taskTitleInput" required placeholder="What needs doing?"></div>
+    <div class="field"><label for="taskDescInput">Description</label><textarea class="input" id="taskDescInput" rows="3" placeholder="Details, links, notes…"></textarea></div>
+    <div class="form-grid">
+      <div class="field"><label for="taskPriorityInput">Priority</label>
+        <select class="input" id="taskPriorityInput"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
+      <div class="field"><label for="taskStatusInput">Status</label>
+        <select class="input" id="taskStatusInput"><option value="pending">Pending</option><option value="in_progress">In progress</option><option value="needs_review">Needs review</option><option value="completed">Completed</option></select></div>
+    </div>
+    <div class="field"><label for="taskDueDateInput">Due date</label><input class="input" type="date" id="taskDueDateInput"></div>
+    <div class="modal-foot">
+      <button type="button" class="btn" onclick="closeTaskModal()">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save task</button>
+    </div>
+  </form>
+</div>
+
+<!-- MODAL: TASK DETAIL (body rendered by openDetailModal) -->
+<div id="detailModal" class="modal hidden" onclick="if (event.target === this) closeDetailModal()">
+  <div class="paper modal-card modal-wide" role="dialog" aria-modal="true" aria-label="Task details">
+    <div class="modal-head">
+      <h2>Task details</h2>
+      <button class="btn btn-round btn-sm" onclick="closeDetailModal()" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div id="detailModalBody" class="stack"></div>
+  </div>
+</div>
+
+<!-- Art: Tick the clipboard (mascot) and the four column emblems -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tick" viewBox="0 0 100 100"><g stroke="#07112a" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="18" y="14" width="64" height="80" rx="12" fill="#b4c8ff" stroke-width="4.5"/>
+    <rect x="27" y="27" width="46" height="58" rx="6" fill="#f8fbff" stroke-width="3"/>
+    <rect x="36" y="6" width="28" height="15" rx="5" fill="#ffe08a" stroke-width="4"/>
+    <g class="blink">
+      <ellipse cx="41" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/><ellipse cx="59" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/>
+      <circle cx="42.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/><circle cx="57.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/>
+    </g>
+    <path d="M32 34 L46 38 M68 34 L54 38" fill="none" stroke-width="3.8"/>
+    <path d="M45 59 Q50 63 55 59" fill="none" stroke-width="3"/>
+    <path d="M33 74 L37 78 L44 70 M49 74 H66" fill="none" stroke-width="3.2"/>
+  </g></symbol>
+  <symbol id="e-wait" viewBox="0 0 100 100"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M30 14 H70 M30 86 H70" fill="none"/>
+    <path d="M35 14 C35 40 50 42 50 50 C50 58 35 60 35 86 H65 C65 60 50 58 50 50 C50 42 65 40 65 14 Z" fill="#f8fbff"/>
+    <path d="M41 82 L50 68 L59 82 Z" fill="#ffe08a" stroke-width="3.5"/>
+  </g></symbol>
+  <symbol id="e-go" viewBox="0 0 100 100"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M38 70 L26 82 L30 66 Z M62 70 L74 82 L70 66 Z" fill="#ffb4a8"/>
+    <path d="M50 10 C68 24 70 52 62 74 H38 C30 52 32 24 50 10 Z" fill="#f8fbff"/>
+    <circle cx="50" cy="40" r="9" fill="#9fe4f0"/>
+    <path d="M42 74 Q50 94 58 74" fill="#ffe08a"/>
+  </g></symbol>
+  <symbol id="e-review" viewBox="0 0 100 100"><g stroke="#07112a" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M60 60 L82 82" fill="none" stroke-width="11"/>
+    <circle cx="42" cy="42" r="25" fill="#9fe4f0" stroke-width="5"/>
+    <path d="M30 36 Q34 28 42 27" fill="none" stroke="#f8fbff" stroke-width="5"/>
+  </g></symbol>
+  <symbol id="e-done" viewBox="0 0 100 100"><g stroke="#07112a" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="50" cy="50" r="36" fill="#f8fbff" stroke-width="5"/>
+    <path d="M33 51 L45 63 L68 38" fill="none" stroke-width="8"/>
+  </g></symbol>
+</svg>
+
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,8 +1,13 @@
+import asyncio
 from datetime import datetime, timezone
 import json
 import logging
+import re
+import secrets
 import sys
 import time
+import uuid
+from pathlib import Path
 
 from loguru import logger
 from mcp.server.fastmcp import FastMCP
@@ -21,7 +26,7 @@ logging.getLogger("mcp.server").setLevel(logging.WARNING)
 mcp = FastMCP("todo-list-server")
 
 # FastAPI base URL
-BASE_URL = "http://127.0.0.1:8010/api"
+BASE_URL = "http://127.0.0.1:8190/api"
 
 # ----------------------------------------------------
 # LOGURU CONFIGURATION (CLEAN & TIDY FORMAT)
@@ -48,7 +53,7 @@ logger.add(
 
 # 4. Direct file logging (Detailed, plain text for disk)
 logger.add(
-    "logs/mcp_activity.log",
+    str(Path(__file__).resolve().parent.parent / "logs" / "mcp_activity.log"),
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {function}:{line} - {message}",
     rotation="5 MB",
     retention="7 days",
@@ -295,8 +300,133 @@ def delete_task(task_id: str) -> str:
         return f"Failed to delete task via API: {str(e)}"
 
 
+# ----------------------------------------------------
+# API KEY GATE + CONNECTED AGENTS
+# ----------------------------------------------------
+# Every MCP request must carry "Authorization: Bearer <key>" (or "X-API-Key: <key>").
+# The key lives in the taskboard backend and is created/rotated from the UI (Agents tab).
+UI_ORIGINS = {"http://127.0.0.1:5500", "http://localhost:5500"}
+KEY_TTL_S = 5  # a rotated key takes effect within this many seconds
+_key_cache = {"key": None, "at": 0.0}
+AGENTS = {}  # connection id -> {name, version, connected_at, session_id, token}
+
+
+async def current_key():
+    if time.monotonic() - _key_cache["at"] > KEY_TTL_S:
+        try:
+            r = await asyncio.to_thread(requests.get, f"{BASE_URL}/mcp/key", timeout=3)
+            r.raise_for_status()
+            _key_cache.update(key=r.json()["key"], at=time.monotonic())
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Cannot fetch MCP API key from backend: {e}")
+            _key_cache.update(key=None, at=0.0)  # fail closed, retry next request
+    return _key_cache["key"]
+
+
+async def _send_json(send, status, data, headers=()):
+    body = json.dumps(data).encode()
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json"), *headers]})
+    await send({"type": "http.response.body", "body": body})
+
+
+class AgentGate:
+    """ASGI wrapper around the MCP SSE app: checks the API key and tracks who is connected."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+        path = scope["path"]
+        key = await current_key()
+
+        # Public status for the taskboard UI (names only, never the key)
+        if path == "/status":
+            origin = headers.get("origin", "")
+            cors = [(b"access-control-allow-origin", origin.encode())] if origin in UI_ORIGINS else []
+            agents = [
+                {"name": a["name"], "version": a["version"], "connected_at": a["connected_at"],
+                 "key_valid": bool(key) and secrets.compare_digest(a["token"], key)}
+                for a in AGENTS.values()
+            ]
+            return await _send_json(send, 200, {"server": mcp.name, "agents": agents}, cors)
+
+        token = headers.get("authorization", "").removeprefix("Bearer ").strip() or headers.get("x-api-key", "")
+        if not key:
+            return await _send_json(send, 503, {"error": "Taskboard backend is offline, cannot check the API key."})
+        if not token or not secrets.compare_digest(token, key):
+            logger.warning(f"Rejected MCP request to {path}: missing or wrong API key")
+            return await _send_json(send, 401, {"error": "Missing or invalid API key. Create one in the taskboard Agents tab."})
+
+        if path == "/sse":
+            conn_id = uuid.uuid4().hex
+            AGENTS[conn_id] = conn = {
+                "name": headers.get("x-agent-name") or "unknown agent", "version": "",
+                "connected_at": datetime.now(timezone.utc).isoformat(), "session_id": None, "token": token,
+            }
+            logger.info(f"Agent connected ({len(AGENTS)} total)")
+
+            async def send_and_spy(message):
+                # The first SSE event tells the client its session id: remember it to match the handshake
+                if conn["session_id"] is None and message["type"] == "http.response.body":
+                    m = re.search(rb"session_id=([0-9a-f]+)", message.get("body", b""))
+                    if m:
+                        conn["session_id"] = m.group(1).decode()
+                await send(message)
+
+            try:
+                return await self.app(scope, receive, send_and_spy)
+            finally:
+                AGENTS.pop(conn_id, None)
+                logger.info(f"Agent '{conn['name']}' disconnected ({len(AGENTS)} left)")
+
+        if path.startswith("/messages"):
+            # Peek at the JSON-RPC body: "initialize" carries clientInfo {name, version}
+            chunks, more = [], True
+            while more:
+                message = await receive()
+                chunks.append(message.get("body", b""))
+                more = message.get("more_body", False)
+            body = b"".join(chunks)
+            self._note_client(scope, headers, body)
+
+            replayed = False
+
+            async def replay():
+                nonlocal replayed
+                if not replayed:
+                    replayed = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return await receive()
+
+            return await self.app(scope, replay, send)
+
+        return await self.app(scope, receive, send)
+
+    @staticmethod
+    def _note_client(scope, headers, body):
+        try:
+            msg = json.loads(body)
+        except ValueError:
+            return
+        if not isinstance(msg, dict) or msg.get("method") != "initialize":
+            return
+        info = msg.get("params", {}).get("clientInfo", {})
+        session = re.search(r"session_id=([0-9a-f]+)", scope.get("query_string", b"").decode())
+        for conn in AGENTS.values():
+            if session and conn["session_id"] == session.group(1):
+                if not headers.get("x-agent-name"):
+                    conn["name"] = info.get("name") or conn["name"]
+                conn["version"] = info.get("version", "")
+                logger.success(f"Agent '{conn['name']}' {conn['version']} completed handshake")
+
+
 if __name__ == "__main__":
-    logger.info("Starting MCP Server on http://127.0.0.1:8001/sse...")
-    mcp.settings.host = "127.0.0.1"
-    mcp.settings.port = 8001
-    mcp.run(transport="sse")
+    import uvicorn
+
+    logger.info("Starting MCP Server on http://127.0.0.1:8001/sse (API key required)...")
+    uvicorn.run(AgentGate(mcp.sse_app()), host="127.0.0.1", port=8001, log_level="warning")

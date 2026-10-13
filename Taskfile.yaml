@@ -1,0 +1,40 @@
+version: '3'
+
+# Run `task` to list everything. `task dev` starts the whole stack.
+#   backend  -> http://127.0.0.1:8190/api   (FastAPI + SQLite in data/tasks.db)
+#   mcp      -> http://127.0.0.1:8001/sse   (MCP tools for AI agents, calls the backend)
+#   frontend -> http://127.0.0.1:5500       (task board UI, calls the backend)
+
+tasks:
+  default:
+    cmds: [task --list]
+    silent: true
+
+  install:
+    desc: Install Python dependencies with uv
+    cmds: [uv sync]
+
+  backend:
+    desc: REST API on :8190 (auto-reload)
+    cmds: [uv run uvicorn app:app --app-dir backend --host 127.0.0.1 --port 8190 --reload]
+
+  mcp:
+    desc: MCP server (SSE) on :8001 - needs the backend running
+    cmds: [uv run python mcp_server/server.py]
+
+  frontend:
+    desc: Serve the task board on :5500
+    cmds: [uv run python -m http.server 5500 --bind 127.0.0.1 -d frontend]
+
+  dev:
+    desc: Backend + MCP server + frontend together (Ctrl+C stops all)
+    deps: [backend, mcp, frontend]
+
+  check-mcp:
+    desc: End-to-end check of the MCP API key gate (rotates the key at the end)
+    cmds: [uv run python mcp_server/check_gate.py]
+
+  report:
+    desc: Print the last 7 days of activity from the audit log
+    dir: backend
+    cmds: [uv run python report.py]

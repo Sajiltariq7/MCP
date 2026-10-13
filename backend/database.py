@@ -1,9 +1,13 @@
+import secrets
 import sqlite3
+from pathlib import Path
 
-DB_NAME = "tasks.db"  # Check that this matches your desired database file name
+# Lives in <repo>/data/tasks.db regardless of the working directory
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "tasks.db"
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
+    DB_PATH.parent.mkdir(exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -42,9 +46,28 @@ def init_db():
         )
     """)
 
+    # Key/value settings (holds the MCP API key)
+    cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('mcp_api_key', ?)", (new_api_key(),))
+
     conn.commit()
     conn.close()
     # DO NOT put any cursor.executemany(...) or INSERT INTO tasks here!
+
+def new_api_key():
+    return "tb_" + secrets.token_urlsafe(24)
+
+def get_setting(key):
+    conn = get_db_connection()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+def set_setting(key, value):
+    conn = get_db_connection()
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+    conn.close()
 
 def log_activity(actor, action, entity_type, entity_id, details, timestamp):
     conn = get_db_connection()

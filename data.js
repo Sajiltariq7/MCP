@@ -1,2 +1,0 @@
-const initialTasks = [];
-const initialAuditLogs = [];

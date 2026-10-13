@@ -19,7 +19,7 @@ ENV/
 Thumbs.db
 
 # Databases
-app_activity.db
+data/*.db
 
 # Logs
 logs/

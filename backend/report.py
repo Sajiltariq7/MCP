@@ -1,12 +1,6 @@
-import sqlite3
 from datetime import datetime, timedelta
 
-DB_NAME = "app_activity.db"
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+from database import get_db_connection
 
 def generate_weekly_report(days=7):
     """Fetches activity logs from the past N days and summarizes actions."""

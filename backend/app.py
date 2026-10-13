@@ -5,13 +5,14 @@ from typing import Optional, List
 from datetime import datetime, timezone
 import json
 
-from database import init_db, get_db_connection, log_activity
+from database import init_db, get_db_connection, log_activity, get_setting, set_setting, new_api_key
 
 app = FastAPI(title="MCP Engine Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Only the taskboard UI may call this API from a browser (any other site could read the MCP key)
+    allow_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,6 +21,12 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     init_db()
+
+STATUSES = {"pending": "Pending", "in progress": "In Progress", "needs review": "Needs Review", "completed": "Completed"}
+
+def normalize_status(status):
+    """Map 'in_progress', 'IN PROGRESS', 'In Progress', ... to one canonical form."""
+    return STATUSES.get((status or "").strip().lower().replace("_", " "), "Pending")
 
 class TaskModel(BaseModel):
     id: str
@@ -48,6 +55,7 @@ def get_tasks():
     for row in rows:
         task = dict(row)
         task["subtasks"] = json.loads(task["subtasks"]) if task["subtasks"] else []
+        task["status"] = normalize_status(task["status"])
         tasks.append(task)
 
     return tasks
@@ -57,6 +65,7 @@ def save_or_update_task(task: TaskModel):
     conn = get_db_connection()
     cursor = conn.cursor()
     now_iso = datetime.now(timezone.utc).isoformat()
+    task.status = normalize_status(task.status)
 
     cursor.execute("SELECT * FROM tasks WHERE id = ?", (task.id,))
     existing = cursor.fetchone()
@@ -79,7 +88,8 @@ def save_or_update_task(task: TaskModel):
             started_at = now_iso
 
         # Transitioning to "Needs Review" or "Completed" -> Record completion and duration
-        if new_status in ["Needs Review", "Completed"]:
+        status_changed = normalize_status(existing_dict["status"]) != new_status
+        if new_status in ["Needs Review", "Completed"] and status_changed:
             completed_at = now_iso
             if started_at:
                 try:
@@ -169,7 +179,20 @@ def get_audit_logs():
         })
     return logs
 
+# ----- MCP API key: agents must send it as "Authorization: Bearer <key>" -----
+@app.get("/api/mcp/key")
+def get_mcp_key():
+    return {"key": get_setting("mcp_api_key")}
+
+@app.post("/api/mcp/key/rotate")
+def rotate_mcp_key():
+    key = new_api_key()
+    set_setting("mcp_api_key", key)
+    log_activity("USER", "ROTATE_KEY", "MCP", "api-key", "MCP API key rotated; agents must reconnect with the new key",
+                 datetime.now(timezone.utc).isoformat())
+    return {"key": key}
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8190, reload=True)

@@ -1,6 +1,6 @@
 # ADR 0008: Return the MCP server to SSE on port 8001
 
-- **Status:** Accepted
+- **Status:** Superseded by [0010](0010-serve-streamable-http-alongside-sse.md)
 - **Date:** 2026-09-30
 - **Decided by:** Sajil
 

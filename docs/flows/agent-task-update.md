@@ -24,7 +24,7 @@ sequenceDiagram
 
 ## Steps in order
 
-1. The agent calls an MCP tool over SSE with its API key. The gate checks the key; the tool names the actor `AI:<agent name>` (from the `X-Agent-Name` header or the MCP handshake).
+1. The agent calls an MCP tool over Streamable HTTP (`/mcp`) or SSE (`/sse`) with its API key. The gate checks the key; the tool names the actor `AI:<agent name>` (from the `X-Agent-Name` header or the MCP handshake).
 2. The tool reads the one task with `GET /api/tasks/{id}`. A 404 returns "Task X not found." and stops.
 3. `update_task_status` checks the move: only Pending to In Progress, or In Progress to Needs Review (with results in `description` or existing subtasks). Anything else returns a message naming the allowed next step; nothing is written.
 4. The tool sends only the changed fields with `PATCH /api/tasks/{id}`.

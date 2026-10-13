@@ -2,7 +2,7 @@ version: '3'
 
 # Run `task` to list everything. `task dev` starts the whole stack.
 #   backend  -> http://127.0.0.1:8190/api   (FastAPI + SQLite in data/tasks.db)
-#   mcp      -> http://127.0.0.1:8001/sse   (MCP tools for AI agents, calls the backend)
+#   mcp      -> http://127.0.0.1:8001/mcp   (MCP tools for AI agents; /sse for old SSE clients)
 #   frontend -> http://127.0.0.1:5500       (task board UI, calls the backend)
 
 tasks:
@@ -19,7 +19,7 @@ tasks:
     cmds: [uv run uvicorn app:app --app-dir backend --host 127.0.0.1 --port 8190 --reload]
 
   mcp:
-    desc: MCP server (SSE) on :8001 - needs the backend running
+    desc: MCP server on :8001 (/mcp, and /sse for old clients) - needs the backend running
     cmds: [uv run python mcp_server/server.py]
 
   frontend:
@@ -36,7 +36,7 @@ tasks:
     cmds: [uv run python check_api.py]
 
   check-mcp:
-    desc: End-to-end check of the MCP server - key gate, task order, agent names (rotates the key at the end)
+    desc: End-to-end check of the MCP server - key gate, both transports, task order, agent names, Disconnect (keeps your key)
     cmds: [uv run python mcp_server/check_gate.py]
 
   report:

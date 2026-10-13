@@ -121,13 +121,14 @@
   <!-- VIEW 4: AGENTS (MCP connections + API key) -->
   <section id="view-agents" class="hidden" role="tabpanel" aria-labelledby="nav-agents">
     <div class="section-head">
-      <div><h1>Agents</h1><p>AI agents connected to the MCP server at <code>http://127.0.0.1:8001/sse</code></p></div>
+      <div><h1>Agents</h1><p>AI agents connected to the MCP server at <code>http://127.0.0.1:8001/mcp</code></p></div>
       <span id="mcp-status" class="status" role="status">Checking MCP server…</span>
     </div>
     <div class="two-col">
       <div class="paper stack">
         <h2>Connected agents</h2>
         <ul id="agent-list" class="agent-list"></ul>
+        <p class="hint soft"><b>Disconnect</b> ends that agent's session right away. It can connect again with the key; to keep it out, rotate the key.</p>
       </div>
       <div class="paper stack">
         <h2>API key</h2>
@@ -147,7 +148,7 @@
           <span class="hint soft"><code>--global</code> keeps the key out of this repo's committed <code>opencode.json</code>.</span>
         </div>
         <div class="field">
-          <b>opencode: or add to your <code>opencode.json</code> under <code>mcp</code></b>
+          <b>opencode: or merge this into your global <code>opencode.jsonc</code></b>
           <pre class="code" id="snippet-opencode"></pre>
           <button class="btn btn-sm" onclick="copyText(opencodeSnippet(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy config</button>
         </div>
@@ -157,6 +158,16 @@
           <button class="btn btn-sm" onclick="copyText(claudeSnippet(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy command</button>
         </div>
         <p class="hint soft">Want a custom name on this page? Also send an <code>X-Agent-Name</code> header.</p>
+        <hr class="divider">
+        <h3>Connected before?</h3>
+        <p class="soft">After a key rotation, or if an older setup still uses another key, replace the old entry:</p>
+        <ul class="steps">
+          <li><b>opencode:</b> run the opencode command above again. It replaces the old <code>todo-list-server</code> entry in your global config.</li>
+          <li><b>opencode, inside a project:</b> a project's <code>opencode.json</code> overrides your global config. If it has its own <code>todo-list-server</code> block, delete that block (opencode has no remove command). <code>opencode debug config</code> shows which files define it.</li>
+          <li><b>Claude Code:</b> run <code>claude mcp remove todo-list-server</code>, then the Claude Code command above.</li>
+        </ul>
+        <p class="hint soft">Seeing "Dynamic Client Registration rejected" or a 401? The agent sent no key or an old one. This server has no OAuth.</p>
+        <p class="hint soft">Seeing "Method Not Allowed (HTTP 405)"? The MCP server is an old version: restart it with <code>task mcp</code>. The URL to use is <code>/mcp</code>; <code>/sse</code> still works.</p>
       </div>
     </div>
   </section>

@@ -61,7 +61,7 @@
 <path d="M52 50 H88 M74 50 V64 M86 50 V60" fill="none"/></g></g>
 <text x="434" y="416" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">MCP server</text>
 <text x="388" y="446" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">checks the API key</text>
-<text x="388" y="469" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">127.0.0.1:8001/sse</text>
+<text x="388" y="469" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">127.0.0.1:8001/mcp</text>
 <text x="388" y="492" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">mcp_server/</text>
 <rect x="705" y="135" width="240" height="150" rx="16" fill="#07112a"/>
 <rect x="700" y="130" width="240" height="150" rx="16" fill="#b9f0d8" stroke="#07112a" stroke-width="3"/>
@@ -78,7 +78,7 @@
 <path d="M635 205 H688" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="640.08" y="165" width="43.84" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="662.0" y="183" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">SQL</text>
 <path d="M305 455 H358" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="310.08" y="415" width="43.84" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="332.0" y="433" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">SSE</text>
+<rect x="306.44" y="415" width="51.120000000000005" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="332.0" y="433" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">HTTP</text>
 <path d="M500 375 V292" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="401.64" y="321" width="196.72000000000003" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="500.0" y="339" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">HTTP: tools call the API</text>
 <path d="M220 285 C240 340 300 360 362 400" fill="none" stroke="#07112a" stroke-width="7" stroke-linecap="round" stroke-dasharray="2 9"/><path d="M220 285 C240 340 300 360 362 400" fill="none" stroke="#ffe08a" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-light)" stroke-dasharray="2 9"/>

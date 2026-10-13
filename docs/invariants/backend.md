@@ -17,5 +17,5 @@ For the task API, the database, the MCP server, and reports. Read [core.md](core
 
 ## Before you finish
 
-1. Run `task check-api`; with `task dev` running, run `task check-mcp` (it rotates the key) and call the tool or route you changed.
+1. Run `task check-api`; with `task dev` running, run `task check-mcp` and call the tool or route you changed.
 2. Update [task-api.md](../task-api.md) or [mcp-tools.md](../mcp-tools.md), and the flow if a step changed.

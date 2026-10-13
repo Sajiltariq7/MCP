@@ -39,7 +39,7 @@ The docs record intent and decisions. **The source is the evidence for what is B
 
 ## Stack snapshot
 
-- Python with uv: FastAPI backend on SQLite, an MCP server (SSE) for AI agents, and a static task board.
+- Python with uv: FastAPI backend on SQLite, an MCP server (Streamable HTTP at /mcp, SSE at /sse) for AI agents, and a static task board.
 - Run: `uv sync`, then `task dev` (see [README.md](README.md)). Check docs: `uv run scripts/check_docs.py`.
 
 ## Agent loop

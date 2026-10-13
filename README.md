@@ -29,7 +29,7 @@ It runs only on your machine (`127.0.0.1`). Nothing is deployed.
 | --- | --- | --- | --- |
 | Task board | `http://127.0.0.1:5500` | `frontend/` | The web UI. Plain HTML, CSS and JavaScript, no build step. |
 | REST API | `http://127.0.0.1:8190/api` | `backend/` | FastAPI. The only thing that reads or writes the database. |
-| MCP server | `http://127.0.0.1:8001/sse` | `mcp_server/` | Gives AI agents task tools. Checks the API key on every request. |
+| MCP server | `http://127.0.0.1:8001/mcp` | `mcp_server/` | Gives AI agents task tools. Checks the API key on every request. Also serves `/sse` for older clients. |
 | Database | `data/tasks.db` | `backend/database.py` | SQLite: tasks, the activity log, and the MCP API key. Created on first start. |
 
 The MCP server never touches the database itself: its tools call the REST API, so people and agents follow exactly the same rules.
@@ -66,7 +66,7 @@ Run `task` on its own to list these.
 | `task frontend` | Serve the board on :5500 |
 | `task report` | Print the last 7 days of activity in the terminal |
 | `task check-api` | Check the REST API in-process on a copy of the database. No server needed |
-| `task check-mcp` | End-to-end check of the MCP server: key gate, task order, agent names. **Rotates the key at the end** |
+| `task check-mcp` | End-to-end check of the MCP server: key gate, both transports, task order, agent names, Disconnect. Keeps your key; add `--rotate` (`uv run python mcp_server/check_gate.py --rotate`) to also test rotation |
 
 ## Connect an AI agent
 
@@ -81,26 +81,23 @@ Agents need an API key. There is one key, it lives in the database, and you mana
 **opencode.** Run this once (`--global` saves it to your own opencode config, not this repo's committed `opencode.json`):
 
 ```bash
-opencode mcp add todo-list-server --url http://127.0.0.1:8001/sse --header "Authorization=Bearer <your key>" --global
+opencode mcp add todo-list-server --url http://127.0.0.1:8001/mcp --header "Authorization=Bearer <your key>" --global
 ```
 
-Or paste the copied config into your opencode config. The `opencode.json` committed in this repo can't hold the key (it would put a secret in git), so it reads it from the `TASKBOARD_MCP_KEY` environment variable instead:
-
-```json
-"todo-list-server": {
-  "type": "remote",
-  "url": "http://127.0.0.1:8001/sse",
-  "headers": { "Authorization": "Bearer {env:TASKBOARD_MCP_KEY}" }
-}
-```
+Or paste the copied JSON config into your opencode config. This repo's `opencode.json` deliberately has **no** `todo-list-server` entry: a project entry would override your global one (and couldn't hold the key without committing it).
 
 **Claude Code:**
 
 ```bash
-claude mcp add --transport sse todo-list-server http://127.0.0.1:8001/sse --header "Authorization: Bearer <your key>"
+claude mcp add --transport http todo-list-server http://127.0.0.1:8001/mcp --header "Authorization: Bearer <your key>"
 ```
 
-**Any other MCP client:** connect to `http://127.0.0.1:8001/sse` and send `Authorization: Bearer <key>` (or `X-API-Key: <key>`) on every request.
+**Connected before?** Run the add command again after every key rotation:
+
+- **opencode:** re-running `opencode mcp add` replaces the old entry in your global config. A project's `opencode.json` with its own `todo-list-server` block overrides the global one, so delete that block (opencode has no remove command). `opencode debug config` shows which files define it.
+- **Claude Code:** `claude mcp remove todo-list-server`, then add it again.
+
+**Any other MCP client:** use Streamable HTTP at `http://127.0.0.1:8001/mcp` (or legacy SSE at `http://127.0.0.1:8001/sse`) and send `Authorization: Bearer <key>` (or `X-API-Key: <key>`) on every request.
 
 Good to know:
 
@@ -132,7 +129,7 @@ The header has five tabs, a search box (filters the Board and Manager), and **Ne
 | **Manager** | All tasks in one table with status, creator and duration. |
 | **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**, and on Agent pick one agent by name. |
 | **Report** | Builds a JSON summary of a day or a week for an AI to write up (below). |
-| **Agents** | Is the MCP server running, which agents are connected, and the API key. |
+| **Agents** | Is the MCP server running, which agents are connected (with a **Disconnect** button each), and the API key. |
 
 Cards made by an agent carry a pink chip with the agent's name; cards made by people say **Human**. Cards past their due date show **Overdue**. Deleting a task shows an **Undo** button for 8 seconds.
 
@@ -210,18 +207,12 @@ docs/               rules, flows, decisions (start at docs/index.md)
 data/tasks.db       the database (gitignored, created on first start)
 logs/               MCP server logs (gitignored)
 Taskfile.yaml       the task commands
-opencode.json       MCP config for opencode (key from TASKBOARD_MCP_KEY)
+opencode.json       project opencode config (no taskboard entry: add it with --global)
 ```
 
 ## Environment variables
 
-None. Ports are fixed in the code, and the API key is created, stored and rotated by the board (Agents tab), so there is no `.env` file.
-
-The only optional variable is for opencode run from this repo: the committed `opencode.json` reads the key from `TASKBOARD_MCP_KEY`. Set it in the shell that starts opencode, or skip it and paste the config from the Agents tab instead.
-
-| Name | Used by | Value |
-| --- | --- | --- |
-| `TASKBOARD_MCP_KEY` | `opencode.json` (`{env:TASKBOARD_MCP_KEY}`) | The key from the Agents tab (**Copy key**) |
+None. Ports are fixed in the code, and the API key is created, stored and rotated by the board (Agents tab), so there is no `.env` file. Agents keep the key in their own (global) config.
 
 ## Troubleshooting
 
@@ -229,7 +220,9 @@ The only optional variable is for opencode run from this repo: the committed `op
 | --- | --- |
 | Header says **Offline · saving locally** | The REST API isn't running. Start it with `task backend` or `task dev`. |
 | Agents tab says **MCP server offline** | Run `task mcp`. It needs the REST API running first. |
-| Agent gets `401` or is disconnected | The key is missing or old (it was rotated). Copy the config or key again from the Agents tab. |
+| Agent gets `401` or is disconnected | The key is missing or old (it was rotated). Copy the command again from the Agents tab and rerun it. |
+| opencode says "Method Not Allowed (HTTP 405)" | The MCP server is an older version that only spoke SSE. Restart it (`task mcp`) and use `/mcp` in the add command. |
+| opencode says "Dynamic Client Registration rejected (HTTP 401)" | opencode sent no key, then tried OAuth (this server has none). Usually a project `opencode.json` defines `todo-list-server` without the key and overrides your global entry: delete that block. Check with `opencode debug config`. |
 | Agent says "Can't move task ... from Pending to Completed" | Working as intended: agents go one step at a time and finish with `approve_task`. |
 | Agent gets `503` | The MCP server can't reach the REST API to check the key. Start the backend. |
 | `task dev` fails with "address already in use" (Windows) | An earlier run left Python processes behind. Find them with `netstat -ano \| findstr ":8190 :8001 :5500"` and stop them with `taskkill /PID <pid> /T /F`. |

@@ -257,7 +257,11 @@ def delete_task(ctx: Context, task_id: str) -> str:
 UI_ORIGINS = {"http://127.0.0.1:5500", "http://localhost:5500"}
 KEY_TTL_S = 3  # with the 1 s watch below, a rotation cuts agents off within 5 seconds
 _key_cache = {"key": None, "at": 0.0}
-AGENTS = {}  # connection id -> {name, version, connected_at, session_id, token}
+CLIENTS = {}  # MCP session id -> {name, version, token, connected_at, last_seen}, from the initialize handshake
+STREAMS = {}  # open event stream id -> {id, session_id, token, connected_at, name, kick}
+ENDED = set()  # session ids ended from the board's Disconnect button; their requests get 404
+NO_OAUTH = ("Missing or invalid API key. This server has no OAuth: copy the key from the taskboard Agents tab "
+            "and send it as the header 'Authorization: Bearer <key>'.")
 
 
 async def current_key():
@@ -280,122 +284,252 @@ async def _send_json(send, status, data, headers=()):
 
 
 class AgentGate:
-    """ASGI wrapper around the MCP SSE app: checks the API key and tracks who is connected."""
+    """ASGI wrapper around the MCP app: checks the API key and tracks which agents are connected.
+
+    Two transports share port 8001:
+    - Streamable HTTP at /mcp (current MCP clients such as opencode). A POST/DELETE, or a GET carrying an
+      mcp-session-id, sent to /sse is treated as Streamable HTTP too, so configs that point at /sse keep working.
+    - Legacy SSE: a plain GET /sse opens the stream, then the client POSTs to /messages/.
+    """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
-            return await self.app(scope, receive, send)
+            return await self.app(scope, receive, send)  # lifespan: starts the Streamable HTTP session manager
 
         headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
-        path = scope["path"]
+        path, method = scope["path"], scope["method"]
         key = await current_key()
 
         # Public status for the taskboard UI (names only, never the key)
         if path == "/status":
             origin = headers.get("origin", "")
             cors = [(b"access-control-allow-origin", origin.encode())] if origin in UI_ORIGINS else []
-            agents = [
-                {"name": a["name"], "version": a["version"], "connected_at": a["connected_at"],
-                 "key_valid": bool(key) and secrets.compare_digest(a["token"], key)}
-                for a in AGENTS.values()
-            ]
-            return await _send_json(send, 200, {"server": mcp.name, "agents": agents}, cors)
+            return await _send_json(send, 200, {"server": mcp.name, "agents": connected_agents(key)}, cors)
+
+        # Disconnect button on the board: POST /agents/<id>/disconnect with the API key (CORS: board only)
+        disconnect = re.fullmatch(r"/agents/([\w-]+)/disconnect", path)
+        origin = headers.get("origin", "")
+        cors = [(b"access-control-allow-origin", origin.encode())] if origin in UI_ORIGINS else []
+        if disconnect and method == "OPTIONS":
+            return await _send_json(send, 200, {}, cors + [(b"access-control-allow-methods", b"POST"),
+                                                         (b"access-control-allow-headers", b"authorization")])
+
+        # No OAuth here: answer discovery/registration with 404 so clients don't start an OAuth flow
+        if path.startswith("/.well-known/") or path == "/register":
+            return await _send_json(send, 404, {"error": NO_OAUTH})
+
+        # Ending a session needs no key: opencode sends this DELETE without its headers, and a session id is an
+        # unguessable value the server issued. Without this, closed sessions would linger on the Agents tab.
+        if method == "DELETE" and path in ("/mcp", "/sse") and headers.get("mcp-session-id") in CLIENTS:
+            CLIENTS.pop(headers["mcp-session-id"], None)
+            return await self.app({**scope, "path": "/mcp", "raw_path": b"/mcp"}, receive, send)
 
         token = headers.get("authorization", "").removeprefix("Bearer ").strip() or headers.get("x-api-key", "")
         if not key:
             return await _send_json(send, 503, {"error": "Taskboard backend is offline, cannot check the API key."})
         if not token or not secrets.compare_digest(token, key):
-            logger.warning(f"Rejected MCP request to {path}: missing or wrong API key")
-            return await _send_json(send, 401, {"error": "Missing or invalid API key. Create one in the taskboard Agents tab."})
+            logger.warning(f"Rejected MCP request to {method} {path}: missing or wrong API key")
+            return await _send_json(send, 401, {"error": NO_OAUTH})
 
-        if path == "/sse":
-            conn_id = uuid.uuid4().hex
-            AGENTS[conn_id] = conn = {
-                "name": headers.get("x-agent-name") or "unknown agent", "version": "",
-                "connected_at": datetime.now(timezone.utc).isoformat(), "session_id": None, "token": token,
-            }
-            logger.info(f"Agent connected ({len(AGENTS)} total)")
+        if disconnect and method == "POST":
+            name = disconnect_agent(disconnect.group(1))
+            if not name:
+                return await _send_json(send, 404, {"error": "No connected agent with that id."}, cors)
+            return await _send_json(send, 200, {"disconnected": name}, cors)
 
-            async def send_and_spy(message):
-                # The first SSE event tells the client its session id: remember it to match the handshake
-                if conn["session_id"] is None and message["type"] == "http.response.body":
-                    m = re.search(rb"session_id=([0-9a-f]+)", message.get("body", b""))
-                    if m:
-                        conn["session_id"] = m.group(1).decode()
-                await send(message)
+        if path == "/sse" and (method != "GET" or "mcp-session-id" in headers):
+            scope = {**scope, "path": "/mcp", "raw_path": b"/mcp"}
+            path = "/mcp"
 
-            async def until_key_rotated():
-                # Returns once the key this agent connected with is no longer the current key
-                while True:
-                    await asyncio.sleep(1)
-                    key = await current_key()
-                    if key and not secrets.compare_digest(token, key):
-                        return
+        session_id = headers.get("mcp-session-id") or _query_session(scope)
+        if session_id in ENDED:
+            return await _send_json(send, 404, {"error": "This session was ended from the taskboard. Reconnect to start a new one."})
+        if session_id in CLIENTS:
+            CLIENTS[session_id]["last_seen"] = time.monotonic()
 
-            app_task = asyncio.ensure_future(self.app(scope, receive, send_and_spy))
-            watch_task = asyncio.ensure_future(until_key_rotated())
-            try:
-                done, _ = await asyncio.wait({app_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
-                if watch_task in done:
-                    logger.warning(f"Agent '{conn['name']}' disconnected: the API key was rotated")
-                    app_task.cancel()
-                    await asyncio.gather(app_task, return_exceptions=True)
-                    with contextlib.suppress(Exception):  # end the SSE stream so the client sees it close
-                        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        if method == "GET" and path in ("/sse", "/mcp"):
+            return await self._stream(scope, receive, send, token, session_id)
+
+        if method == "DELETE" and path == "/mcp":
+            CLIENTS.pop(session_id, None)
+
+        if method == "POST" and (path == "/mcp" or path.startswith("/messages")):
+            body = await _read_body(receive)
+            info = _initialize_info(body)
+            if info is not None:
+                name = headers.get("x-agent-name") or info.get("name") or "unknown agent"
+                client = {"name": name, "version": info.get("version", ""), "token": token,
+                          "connected_at": datetime.now(timezone.utc).isoformat(), "last_seen": time.monotonic()}
+                if path == "/mcp":
+                    send = _capture_session(send, client)  # the session id arrives in the response header
                 else:
-                    await app_task
-            finally:
-                watch_task.cancel()
-                app_task.cancel()
-                AGENTS.pop(conn_id, None)
-                logger.info(f"Agent '{conn['name']}' disconnected ({len(AGENTS)} left)")
-
-        if path.startswith("/messages"):
-            # Peek at the JSON-RPC body: "initialize" carries clientInfo {name, version}
-            chunks, more = [], True
-            while more:
-                message = await receive()
-                chunks.append(message.get("body", b""))
-                more = message.get("more_body", False)
-            body = b"".join(chunks)
-            self._note_client(scope, headers, body)
-
-            replayed = False
-
-            async def replay():
-                nonlocal replayed
-                if not replayed:
-                    replayed = True
-                    return {"type": "http.request", "body": body, "more_body": False}
-                return await receive()
-
-            return await self.app(scope, replay, send)
+                    CLIENTS[session_id] = client
+                    logger.success(f"Agent '{name}' {client['version']} completed handshake (SSE)")
+            return await self.app(scope, _replay(body, receive), send)
 
         return await self.app(scope, receive, send)
 
-    @staticmethod
-    def _note_client(scope, headers, body):
+    async def _stream(self, scope, receive, send, token, session_id):
+        """An open event stream = a connected agent. Closed by the server if the key is rotated away."""
+        conn_id = uuid.uuid4().hex
+        STREAMS[conn_id] = conn = {"id": conn_id, "session_id": session_id, "token": token, "name": None,
+                                   "connected_at": datetime.now(timezone.utc).isoformat(), "kick": asyncio.Event()}
+        _agent_name(conn)  # Streamable HTTP: the handshake already named this session
+
+        async def send_and_spy(message):
+            # Legacy SSE: the first event tells the client its session id; remember it to match the handshake
+            if conn["session_id"] is None and message["type"] == "http.response.body":
+                m = re.search(rb"session_id=([0-9a-f]+)", message.get("body", b""))
+                if m:
+                    conn["session_id"] = m.group(1).decode()
+            await send(message)
+
+        async def until_closed_by_board():
+            # Returns the reason once the board disconnects this agent or rotates the key it connected with
+            while True:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(conn["kick"].wait(), timeout=1)
+                    return "the Disconnect button on the taskboard"
+                key = await current_key()
+                if key and not secrets.compare_digest(token, key):
+                    return "the API key was rotated"
+
+        app_task = asyncio.ensure_future(self.app(scope, receive, send_and_spy))
+        watch_task = asyncio.ensure_future(until_closed_by_board())
         try:
-            msg = json.loads(body)
-        except ValueError:
-            return
-        if not isinstance(msg, dict) or msg.get("method") != "initialize":
-            return
-        info = msg.get("params", {}).get("clientInfo", {})
-        session = re.search(r"session_id=([0-9a-f]+)", scope.get("query_string", b"").decode())
-        for conn in AGENTS.values():
-            if session and conn["session_id"] == session.group(1):
-                if not headers.get("x-agent-name"):
-                    conn["name"] = info.get("name") or conn["name"]
-                conn["version"] = info.get("version", "")
-                logger.success(f"Agent '{conn['name']}' {conn['version']} completed handshake")
+            done, _ = await asyncio.wait({app_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
+            if watch_task in done:
+                logger.warning(f"Agent '{_agent_name(conn)}' disconnected: {watch_task.result()}")
+                conn["name"] = _agent_name(conn)
+                CLIENTS.pop(conn["session_id"], None)
+                app_task.cancel()
+                await asyncio.gather(app_task, return_exceptions=True)
+                with contextlib.suppress(Exception):  # end the stream so the client sees it close
+                    await send({"type": "http.response.body", "body": b"", "more_body": False})
+            else:
+                await app_task
+        finally:
+            watch_task.cancel()
+            app_task.cancel()
+            STREAMS.pop(conn_id, None)
+            name = _agent_name(conn)
+            if scope["path"] == "/sse":  # legacy SSE: the session ends with its stream
+                CLIENTS.pop(conn["session_id"], None)
+            logger.info(f"Agent '{name}' stream closed ({len(STREAMS)} open)")
+
+
+def _query_session(scope):
+    m = re.search(r"session_id=([0-9a-f]+)", scope.get("query_string", b"").decode())
+    return m.group(1) if m else None
+
+
+def _agent_name(conn):
+    """The handshake name; kept on the stream too, because a client may end its session before the stream closes."""
+    name = CLIENTS.get(conn["session_id"], {}).get("name")
+    if name:
+        conn["name"] = name
+    return conn["name"] or "unknown agent"
+
+
+def connected_agents(key):
+    """Agents for /status, one entry per agent (same name and version). One client can hold several MCP
+    sessions (opencode opens a few), so each entry lists its session `ids` and a `sessions` count."""
+    groups = {}
+    for s in _sessions(key):
+        g = groups.setdefault((s["name"], s["version"], s["key_valid"]), {**s, "ids": [], "sessions": 0})
+        g["ids"].append(s["id"])
+        g["sessions"] += 1
+        g["connected_at"] = min(g["connected_at"], s["connected_at"])
+    return [{k: v for k, v in g.items() if k != "id"} for g in groups.values()]
+
+
+def _sessions(key):
+    """Every open stream, plus Streamable HTTP sessions active in the last 2 minutes."""
+    valid = lambda token: bool(key) and secrets.compare_digest(token, key)
+    agents, seen = [], set()
+    for conn in STREAMS.values():
+        client = CLIENTS.get(conn["session_id"], {})
+        seen.add(conn["session_id"])
+        agents.append({"id": conn["session_id"] or conn["id"], "name": _agent_name(conn), "version": client.get("version", ""),
+                       "connected_at": conn["connected_at"], "key_valid": valid(conn["token"])})
+    for session_id, client in CLIENTS.items():
+        if session_id not in seen and valid(client["token"]) and time.monotonic() - client["last_seen"] < 120:
+            agents.append({"id": session_id, "name": client["name"], "version": client["version"],
+                           "connected_at": client["connected_at"], "key_valid": True})
+    return agents
+
+
+def disconnect_agent(agent_id):
+    """End an agent's session and close its stream. Returns its name, or None if no such agent.
+    The agent can connect again with the key; rotating the key keeps it out."""
+    conns = [c for c in STREAMS.values() if agent_id in (c["id"], c["session_id"])]
+    session_id = conns[0]["session_id"] if conns else agent_id
+    if not conns and session_id not in CLIENTS:
+        return None
+    name = _agent_name(conns[0]) if conns else CLIENTS[session_id]["name"]
+    if session_id:
+        ENDED.add(session_id)
+        CLIENTS.pop(session_id, None)
+    for conn in conns:
+        conn["kick"].set()
+    logger.warning(f"Agent '{name}' disconnected from the taskboard")
+    return name
+
+
+async def _read_body(receive):
+    chunks, more = [], True
+    while more:
+        message = await receive()
+        chunks.append(message.get("body", b""))
+        more = message.get("more_body", False)
+    return b"".join(chunks)
+
+
+def _replay(body, receive):
+    """Give the app the body we already read, then hand over to the real receive (for disconnects)."""
+    sent = False
+
+    async def replay():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+    return replay
+
+
+def _initialize_info(body):
+    """clientInfo {name, version} if this JSON-RPC body is an initialize request, else None."""
+    try:
+        msg = json.loads(body)
+    except ValueError:
+        return None
+    if isinstance(msg, dict) and msg.get("method") == "initialize":
+        return msg.get("params", {}).get("clientInfo", {}) or {}
+    return None
+
+
+def _capture_session(send, client):
+    async def send_and_capture(message):
+        if message["type"] == "http.response.start":
+            session_id = dict(message.get("headers", [])).get(b"mcp-session-id")
+            if session_id:
+                CLIENTS[session_id.decode()] = client
+                logger.success(f"Agent '{client['name']}' {client['version']} completed handshake (Streamable HTTP)")
+        await send(message)
+    return send_and_capture
 
 
 if __name__ == "__main__":
     import uvicorn
+    from starlette.applications import Starlette
 
-    logger.info("Starting MCP Server on http://127.0.0.1:8001/sse (API key required)...")
-    uvicorn.run(AgentGate(mcp.sse_app()), host="127.0.0.1", port=8001, log_level="warning")
+    # One app, both transports: Streamable HTTP (/mcp) and legacy SSE (/sse + /messages/)
+    http_app, sse_app = mcp.streamable_http_app(), mcp.sse_app()
+    app = Starlette(routes=[*http_app.routes, *sse_app.routes], lifespan=lambda _: mcp.session_manager.run())
+
+    logger.info("Starting MCP Server on http://127.0.0.1:8001/mcp (Streamable HTTP) and /sse (SSE); API key required")
+    uvicorn.run(AgentGate(app), host="127.0.0.1", port=8001, log_level="warning")

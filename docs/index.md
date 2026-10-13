@@ -36,14 +36,14 @@ AGENTS.md -> invariants/core.md + one rule doc -> this page -> topic page -> sou
 | What are the rules for an agent operating tasks? | [invariants/core.md](invariants/core.md) |
 | Where is the database, and what is in it? | [task-api.md](task-api.md) |
 | Why does the board work without the backend? | [task-board.md](task-board.md) |
-| Why SSE and not stdio? | [adrs/0008-return-mcp-server-to-sse.md](adrs/0008-return-mcp-server-to-sse.md) |
+| Why /mcp and /sse, not stdio? | [adrs/0010-serve-streamable-http-alongside-sse.md](adrs/0010-serve-streamable-http-alongside-sse.md) |
 | Why must logs never go to stdout? | [adrs/0009-proposal-first-workflow-and-stderr-logging.md](adrs/0009-proposal-first-workflow-and-stderr-logging.md) |
 
 ## Glossary
 
 | Name | What it is | Where in code |
 | --- | --- | --- |
-| todo-list-server | The MCP server's name, as agents and `opencode.json` see it | `mcp_server/server.py` |
+| todo-list-server | The MCP server's name, as agents register it (`opencode mcp add`, `claude mcp add`) | `mcp_server/server.py` |
 | MCP engine | Older name for the board and API (API title, `localStorage` keys) | `backend/app.py`, `frontend/script.js` |
 | Taskboard | The board's current title | `frontend/index.html` |
 | actor | Who made a change, as sent by the caller: `USER` (board) or `AI:<agent name>` (MCP; older rows `AI_AGENT`) | `backend/app.py` |

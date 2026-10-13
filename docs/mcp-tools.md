@@ -2,9 +2,9 @@
 
 **Status:** Built. An MCP server named `todo-list-server` gives AI agents seven task tools, each a call to the task API.
 **Verified:** 2026-10-13 at c080fd5 (plus the uncommitted sync and lifecycle changes)
-**Source:** `mcp_server/server.py`, `opencode.json`
+**Source:** `mcp_server/server.py`
 
-The server runs over SSE at `http://127.0.0.1:8001/sse` ([ADR 0008](adrs/0008-return-mcp-server-to-sse.md)) and needs the [task API](task-api.md) running at `http://127.0.0.1:8190/api`. It never opens the database ([ADR 0003](adrs/0003-agents-use-mcp-server-over-rest-api.md)).
+The server speaks Streamable HTTP at `http://127.0.0.1:8001/mcp` and, for older clients, SSE at `http://127.0.0.1:8001/sse` ([ADR 0010](adrs/0010-serve-streamable-http-alongside-sse.md)) and needs the [task API](task-api.md) running at `http://127.0.0.1:8190/api`. It never opens the database ([ADR 0003](adrs/0003-agents-use-mcp-server-over-rest-api.md)).
 
 ## Tools
 
@@ -24,18 +24,19 @@ The rules agents follow when they use these tools (call `get_tasks` first, go th
 
 ## API key and connected agents
 
-The SSE app is wrapped by `AgentGate` in `mcp_server/server.py`.
+Both transports are wrapped by `AgentGate` in `mcp_server/server.py`. A `POST` (or a `GET` with an `mcp-session-id`) to `/sse` is routed to Streamable HTTP, so configs pointing at `/sse` keep working. "Connected" means an open event stream, or a Streamable HTTP session active in the last 2 minutes.
 
 | Request | Result |
 | --- | --- |
 | Any MCP request with `Authorization: Bearer <key>` or `X-API-Key: <key>` matching the backend key | Passed through |
 | Missing or wrong key | `401` |
 | Backend unreachable, so the key can't be checked | `503` (fails closed) |
-| `GET /status` | Public JSON for the board: server name plus each connected agent's `name`, `version`, `connected_at`, `key_valid`. Never the key. CORS allows only the board's origin |
+| `GET /status` | Public JSON for the board: server name plus each connected agent's `id`, `name`, `version`, `connected_at`, `key_valid`. Never the key. CORS allows only the board's origin |
+| `POST /agents/{id}/disconnect` with the key | The board's **Disconnect** button: closes that agent's stream and ends its session (later requests with that session get `404`). The agent can connect again with the key; rotating the key keeps it out. CORS allows only the board's origin |
 
 - The key comes from `GET /api/mcp/key` and is cached for 3 seconds. Each open connection rechecks it every second, so after a rotation the server closes connections that use the old key within 5 seconds; new requests with the old key get `401`.
 - An agent's name comes from `clientInfo` in the MCP `initialize` request, or from an `X-Agent-Name` header if sent.
-- `task check-mcp` runs `mcp_server/check_gate.py`, an end-to-end check with a real MCP client: the key gate, agent names in the log, the task order rules, and closing connections on rotation. It rotates the key at the end.
+- `task check-mcp` runs `mcp_server/check_gate.py`, an end-to-end check with a real MCP client: the key gate on both transports, agent names in the log, the task order rules, grouping sessions per agent, and Disconnect. `--rotate` also tests closing connections on rotation (it rotates the real key).
 
 ## Logging
 
@@ -43,7 +44,9 @@ loguru writes to stderr (coloured, INFO and up) and to a log file under the repo
 
 ## Clients
 
-`opencode.json` registers `todo-list-server` as a remote SSE server and sends `Authorization: Bearer {env:TASKBOARD_MCP_KEY}`, so the key never sits in a committed file. Other setups paste the config copied from the board's Agents tab. It also registers a `calculator-server`, which is a separate project not in this repo.
+Agents register `todo-list-server` in their own config with the key from the board's Agents tab: `opencode mcp add todo-list-server --url http://127.0.0.1:8001/mcp --header "Authorization=Bearer <key>" --global`, or `claude mcp add --transport http todo-list-server http://127.0.0.1:8001/mcp --header "Authorization: Bearer <key>"`. The repo's `opencode.json` has no `todo-list-server` entry on purpose: a project entry overrides the user's global one, and it could not hold the key without committing it.
+
+OAuth discovery and registration paths (`/.well-known/*`, `/register`) return `404`, so clients that get a `401` don't start an OAuth flow; the `401` body says to send the key. It also registers a `calculator-server`, which is a separate project not in this repo.
 
 ## Open questions
 

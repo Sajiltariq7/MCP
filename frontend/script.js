@@ -1,7 +1,8 @@
 // Backend REST API (backend/app.py)
 const API = 'http://127.0.0.1:8190/api';
-// MCP server (mcp_server/server.py): agents connect to /sse, the UI reads /status
+// MCP server (mcp_server/server.py): agents connect to /mcp (Streamable HTTP; /sse for old SSE clients), the UI reads /status
 const MCP_URL = 'http://127.0.0.1:8001';
+const MCP_ENDPOINT = `${MCP_URL}/mcp`;
 
 // State Management
 let state = {
@@ -1173,7 +1174,7 @@ async function fetchAgents() {
 }
 
 function renderAgents() {
-  const live = state.agents.filter(a => a.key_valid).length;
+  const live = state.agents.filter(a => a.key_valid).length; // agents, not sessions (one agent can hold several)
   document.getElementById('n-agents').textContent = live;
 
   const statusEl = document.getElementById('mcp-status');
@@ -1196,11 +1197,13 @@ function renderAgents() {
       <span class="avatar" aria-hidden="true"><i class="fa-solid fa-robot"></i></span>
       <div>
         <b>${esc(a.name)}</b> ${a.version ? `<span class="chip">v${esc(a.version)}</span>` : ''}
+        ${a.sessions > 1 ? `<span class="chip" title="This agent holds ${a.sessions} MCP sessions">${a.sessions} sessions</span>` : ''}
         <p class="soft">Connected since ${getShortTime(a.connected_at)}</p>
       </div>
-      ${a.key_valid
+      <span class="agent-actions">${a.key_valid
         ? `<span class="status tone-3"><span class="live-dot pulse" aria-hidden="true"></span>Connected</span>`
         : `<span class="status tone-5"><i class="fa-solid fa-key" aria-hidden="true"></i>Old key: reconnect</span>`}
+      ${a.ids?.length ? `<button class="btn btn-sm btn-warn" onclick="disconnectAgent('${esc(a.ids.join(','))}', this)" aria-label="Disconnect ${esc(a.name)}"><i class="fa-solid fa-plug-circle-xmark" aria-hidden="true"></i> Disconnect</button>` : ''}</span>
     </li>`).join('');
 }
 
@@ -1213,6 +1216,24 @@ async function fetchApiKey() {
     state.apiKey = null;
   }
   renderKey();
+}
+
+// Ends all of the agent's sessions and closes its connections. It can reconnect with the key; rotating the key keeps it out.
+async function disconnectAgent(ids, btn) {
+  btn.disabled = true;
+  try {
+    for (const id of ids.split(',')) {
+      const res = await fetch(`${MCP_URL}/agents/${encodeURIComponent(id)}/disconnect`, {
+        method: 'POST', headers: { Authorization: `Bearer ${state.apiKey}` }
+      });
+      if (!res.ok && res.status !== 404) throw new Error(res.status); // 404: that session had already gone
+    }
+  } catch (err) {
+    btn.disabled = false;
+    alert("Couldn't disconnect the agent: the MCP server or the API is not reachable.");
+    return;
+  }
+  fetchAgents();
 }
 
 async function rotateKey() {
@@ -1234,11 +1255,12 @@ function toggleKey() {
   renderKey();
 }
 
-const opencodeSnippet = (key) => JSON.stringify({ 'todo-list-server': {
-  type: 'remote', url: `${MCP_URL}/sse`, enabled: true, headers: { Authorization: `Bearer ${key}` } } }, null, 2);
+// opencode v2 config shape: mcp.servers.<name>
+const opencodeSnippet = (key) => JSON.stringify({ mcp: { servers: { 'todo-list-server': {
+  type: 'remote', url: MCP_ENDPOINT, headers: { Authorization: `Bearer ${key}` } } } } }, null, 2);
 // --global writes to the user's opencode config, so the key never lands in this repo's committed opencode.json
-const opencodeCommand = (key) => `opencode mcp add todo-list-server --url ${MCP_URL}/sse --header "Authorization=Bearer ${key}" --global`;
-const claudeSnippet = (key) => `claude mcp add --transport sse todo-list-server ${MCP_URL}/sse --header "Authorization: Bearer ${key}"`;
+const opencodeCommand = (key) => `opencode mcp add todo-list-server --url ${MCP_ENDPOINT} --header "Authorization=Bearer ${key}" --global`;
+const claudeSnippet = (key) => `claude mcp add --transport http todo-list-server ${MCP_ENDPOINT} --header "Authorization: Bearer ${key}"`;
 
 function renderKey() {
   const shown = !state.apiKey ? null : state.showKey ? state.apiKey : `${state.apiKey.slice(0, 6)}${'•'.repeat(26)}`;

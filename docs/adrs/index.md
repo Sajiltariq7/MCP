@@ -11,8 +11,9 @@ One decision per file. Never edited to change it, only superseded.
 | [0005](0005-move-storage-to-sqlite.md) | Move storage to SQLite | Accepted | 2026-09-24 |
 | [0006](0006-serve-mcp-server-over-sse.md) | Serve the MCP server over SSE on port 8001 | Superseded by 0007 | 2026-09-24 |
 | [0007](0007-run-mcp-server-over-stdio.md) | Run the MCP server over stdio, launched by opencode | Superseded by 0008 | 2026-09-28 |
-| [0008](0008-return-mcp-server-to-sse.md) | Return the MCP server to SSE on port 8001 | Accepted | 2026-09-30 |
+| [0008](0008-return-mcp-server-to-sse.md) | Return the MCP server to SSE on port 8001 | Superseded by 0010 | 2026-09-30 |
 | [0009](0009-proposal-first-workflow-and-stderr-logging.md) | Proposal-first agent workflow and loguru logging to stderr | Accepted | 2026-09-30 |
+| [0010](0010-serve-streamable-http-alongside-sse.md) | Serve Streamable HTTP at /mcp alongside SSE | Accepted | 2026-10-13 |
 
 ## Read these first
 
@@ -23,6 +24,7 @@ One decision per file. Never edited to change it, only superseded.
 - [0002](0002-store-tasks-in-json-files.md) by [0005](0005-move-storage-to-sqlite.md).
 - [0006](0006-serve-mcp-server-over-sse.md) by [0007](0007-run-mcp-server-over-stdio.md).
 - [0007](0007-run-mcp-server-over-stdio.md) by [0008](0008-return-mcp-server-to-sse.md).
+- [0008](0008-return-mcp-server-to-sse.md) by [0010](0010-serve-streamable-http-alongside-sse.md).
 
 ## Not decided yet
 

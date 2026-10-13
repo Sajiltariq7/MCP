@@ -89,6 +89,7 @@
         <button class="tab" aria-pressed="false" onclick="setActivityFilter('agent')"><i class="fa-solid fa-robot" aria-hidden="true"></i> Agent <span class="count" id="n-agent">0</span></button>
         <button class="tab" aria-pressed="false" onclick="setActivityFilter('human')"><i class="fa-solid fa-user" aria-hidden="true"></i> Human <span class="count" id="n-human">0</span></button>
       </div>
+      <select id="agent-name-filter" class="input input-sm hidden" aria-label="Show one agent" onchange="state.agentName = this.value; renderAuditLogs()"></select>
     </div>
     <div class="paper"><ol id="audit-log-container" class="timeline"></ol></div>
   </section>
@@ -140,7 +141,13 @@
         <hr class="divider">
         <h3>Connect an agent</h3>
         <div class="field">
-          <b>opencode: add to <code>opencode.json</code> under <code>mcp</code></b>
+          <b>opencode: run in a terminal</b>
+          <pre class="code" id="snippet-opencode-cmd"></pre>
+          <button class="btn btn-sm" onclick="copyText(opencodeCommand(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy command</button>
+          <span class="hint soft"><code>--global</code> keeps the key out of this repo's committed <code>opencode.json</code>.</span>
+        </div>
+        <div class="field">
+          <b>opencode: or add to your <code>opencode.json</code> under <code>mcp</code></b>
           <pre class="code" id="snippet-opencode"></pre>
           <button class="btn btn-sm" onclick="copyText(opencodeSnippet(state.apiKey), this)"><i class="fa-regular fa-copy" aria-hidden="true"></i> Copy config</button>
         </div>
@@ -187,6 +194,12 @@
     </div>
     <div id="detailModalBody" class="stack"></div>
   </div>
+</div>
+
+<!-- Undo toast, shown for 8 s after a delete -->
+<div id="toast" class="toast hidden" role="status">
+  <span id="toast-text"></span>
+  <button class="btn btn-sm btn-primary" id="toast-undo"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Undo</button>
 </div>
 
 <!-- Art: Tick the clipboard (mascot) and the four column emblems -->

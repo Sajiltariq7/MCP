@@ -16,7 +16,9 @@ let state = {
   reportMode: 'day',
   report: null,
   editingTaskId: null,
-  isServerOnline: false
+  isServerOnline: false,
+  dragging: false,
+  agentName: 'all'
 };
 
 let liveTimerInterval = null;
@@ -127,9 +129,11 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAuditLogs();
   setupDragAndDrop();
+  setupTouchDrag();
   fetchApiKey();
   fetchAgents();
   setInterval(fetchAgents, 5000);
+  setInterval(autoRefresh, 5000);
 
   liveTimerInterval = setInterval(() => {
     if (state.activeTab === 'board' && state.tasks.some(t => normalizeStatus(t.status) === 'in_progress')) {
@@ -201,10 +205,9 @@ function closeTaskModal() {
   state.editingTaskId = null;
 }
 
-// Send the full task to the backend (create or update), then refresh the audit trail
-async function pushTask(task) {
-  if (!state.isServerOnline) return;
-  const payload = {
+// Full task body for POST /tasks (create, or restore after an undo)
+function taskPayload(task) {
+  return {
     id: String(task.id),
     title: task.title || 'Untitled',
     description: task.description || '',
@@ -219,17 +222,51 @@ async function pushTask(task) {
     duration_ms: task.duration_ms || null,
     subtasks: parseSubtasks(task.subtasks)
   };
+}
 
+/* Every change is sent through write(). If the API can't be reached, the change waits in an outbox
+   (kept in localStorage) and is replayed in order on the next successful sync, so offline edits survive. */
+const OUTBOX_KEY = 'mcp_engine_outbox';
+let outbox = [];
+try { outbox = JSON.parse(localStorage.getItem(OUTBOX_KEY)) || []; } catch (err) { outbox = []; }
+const saveOutbox = () => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch (err) { /* storage full or blocked */ } };
+
+// true when the API took the change, or rejected it for good (4xx, e.g. the task was already deleted)
+async function send(op) {
   try {
-    await fetch(`${API}/tasks`, {
-      method: 'POST',
+    const res = await fetch(`${API}${op.path}`, {
+      method: op.method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: op.body ? JSON.stringify(op.body) : undefined
     });
-    await fetchAuditLogs();
+    if (res.status >= 400 && res.status < 500) console.warn(`Change dropped (${res.status}):`, op);
+    return res.status < 500;
   } catch (err) {
-    console.warn('Backend save failed, stored locally.');
+    return false;
   }
+}
+
+async function write(method, path, body) {
+  const op = { method, path, body };
+  // Earlier offline changes go first, so the order of edits is kept
+  if (outbox.length || !(await send(op))) {
+    outbox.push(op);
+    saveOutbox();
+    state.isServerOnline = false;
+    setApiStatus(false);
+    return false;
+  }
+  fetchAuditLogs();
+  return true;
+}
+
+async function flushOutbox() {
+  while (outbox.length) {
+    if (!(await send(outbox[0]))) return false;
+    outbox.shift();
+    saveOutbox();
+  }
+  return true;
 }
 
 async function saveTask() {
@@ -252,6 +289,7 @@ async function saveTask() {
     : null;
 
   const norm = normalizeStatus(status);
+  let patch = null;
 
   if (task) {
     const changes = [];
@@ -274,6 +312,14 @@ async function saveTask() {
     if (task.description !== description) changes.push(`Task description modified`);
     
     const updateSummary = changes.length > 0 ? changes.join(' | ') : 'Task configuration updated';
+
+    // Send only what changed, so an agent's edits to other fields of this task survive
+    patch = { actor: 'USER' };
+    if (task.title !== title) patch.title = title;
+    if ((task.description || '') !== description) patch.description = description;
+    if ((task.priority || 'medium') !== priority) patch.priority = priority;
+    if (oldNormStatus !== norm) patch.status = status;
+    if ((task.due_date || null) !== dueDate) patch.due_date = dueDate;
 
     task.title = title;
     task.description = description;
@@ -308,7 +354,8 @@ async function saveTask() {
   saveToLocalStorage();
   renderDashboard();
   closeTaskModal();
-  await pushTask(task);
+  if (patch) await write('PATCH', `/tasks/${task.id}`, patch);
+  else await write('POST', '/tasks', taskPayload(task));
 }
 
 /* ==========================================
@@ -327,7 +374,7 @@ async function toggleSubtask(taskId, index) {
     addLocalAuditLog('UPDATE', task.title, 'USER', task.id, `Subtask updated (${completedCount}/${subtasks.length} completed)`);
     saveToLocalStorage();
     openDetailModal(taskId); // Refresh modal view
-    await pushTask(task);
+    await write('PATCH', `/tasks/${task.id}`, { subtasks, actor: 'USER' });
   }
 }
 
@@ -369,32 +416,41 @@ async function updateTaskStatus(taskId, rawNewStatus) {
   addLocalAuditLog('UPDATE', task.title, 'USER', task.id, updateSummary);
   saveToLocalStorage();
   renderDashboard();
-  await pushTask(task);
+  await write('PATCH', `/tasks/${task.id}`, { status: formattedStatus, actor: 'USER' });
 }
 
 async function deleteTask(taskId) {
   const taskToDelete = state.tasks.find(t => String(t.id) === String(taskId));
-  if (taskToDelete && !confirm(`Delete "${taskToDelete.title}"? This can't be undone.`)) return;
+  if (!taskToDelete) return;
   closeDetailModal();
-  if (taskToDelete) {
-    const timeStr = getShortTime();
-    addLocalAuditLog('DELETE', taskToDelete.title, 'USER', taskToDelete.id, `Task deleted from system (AT: ${timeStr})`);
-  }
+  addLocalAuditLog('DELETE', taskToDelete.title, 'USER', taskToDelete.id, `Task deleted from system (AT: ${getShortTime()})`);
 
   state.tasks = state.tasks.filter(t => String(t.id) !== String(taskId));
   saveToLocalStorage();
   renderDashboard();
+  showUndo(taskToDelete);
+  await write('DELETE', `/tasks/${encodeURIComponent(taskId)}?actor=USER`);
+}
 
-  if (state.isServerOnline) {
-    try {
-      await fetch(`${API}/tasks/${taskId}?actor=USER`, {
-        method: 'DELETE'
-      });
-      fetchAuditLogs();
-    } catch (error) {
-      console.warn('Backend delete failed.');
-    }
-  }
+// After a delete, offer Undo for 8 seconds. Undo puts the task back with its history and timestamps.
+let undoTimer = null;
+function showUndo(task) {
+  const toast = document.getElementById('toast');
+  document.getElementById('toast-text').textContent = `Deleted "${task.title || 'Untitled'}".`;
+  document.getElementById('toast-undo').onclick = () => restoreTask(task);
+  toast.classList.remove('hidden');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => toast.classList.add('hidden'), 8000);
+}
+
+async function restoreTask(task) {
+  clearTimeout(undoTimer);
+  document.getElementById('toast').classList.add('hidden');
+  if (!state.tasks.some(t => String(t.id) === String(task.id))) state.tasks.push(task);
+  addLocalAuditLog('RESTORE', task.title, 'USER', task.id, 'Task restored');
+  saveToLocalStorage();
+  renderDashboard();
+  await write('POST', '/tasks?restore=true', taskPayload(task));
 }
 
 /* ==========================================
@@ -445,7 +501,7 @@ function renderTaskHistory(taskId) {
     : taskLogs.map(log => `
         <li style="--tone: ${logTone(log.action)}">
           <div class="log">
-            <div class="log-top"><span class="badge-key">${esc(log.action)}</span><span class="chip ${log.actor === 'AI_AGENT' ? 'tone-6' : ''}">${esc(log.actor || 'USER')}</span><time>${logTime(log.timestamp)}</time></div>
+            <div class="log-top"><span class="badge-key">${esc(log.action)}</span><span class="chip ${isAgentLog(log) ? 'tone-6' : ''}">${esc(isAgentLog(log) ? agentName(log.actor) : (log.actor || 'USER'))}</span><time>${logTime(log.timestamp)}</time></div>
             <p class="soft">${esc(getLogUpdateText(log))}</p>
           </div>
         </li>`).join('');
@@ -485,7 +541,7 @@ function openDetailModal(taskId) {
           ${['pending', 'in_progress', 'needs_review', 'completed'].map(k => `<option value="${k}" ${k === normStatus ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}
         </select></dd></div>
       <div><dt>Creator</dt><dd>${esc(task.creator || 'human')}</dd></div>
-      <div><dt>Due date</dt><dd class="mono">${esc(task.due_date || 'None')}</dd></div>
+      <div><dt>Due date</dt><dd class="mono">${esc(task.due_date || 'None')}${isOverdue(task) ? ' <span class="chip tone-5">Overdue</span>' : ''}</dd></div>
       <div><dt>Time spent</dt><dd class="mono">${elapsedTime}</dd></div>
       <div><dt>Created</dt><dd class="mono">${formatDate(task.created_at)}</dd></div>
       <div><dt>Subtasks</dt><dd><span class="chip">${completedCount} of ${subtasks.length} done</span></dd></div>
@@ -517,11 +573,14 @@ function setApiStatus(online) {
   statusEl.title = online ? `Backend ${API}` : `Can't reach ${API}`;
   statusEl.innerHTML = online
     ? `<span class="live-dot pulse" aria-hidden="true"></span>Live · synced ${getShortTime()}`
-    : `<i class="fa-solid fa-plug-circle-xmark" aria-hidden="true"></i>Offline · saving locally`;
+    : `<i class="fa-solid fa-plug-circle-xmark" aria-hidden="true"></i>Offline · ${outbox.length ? `${outbox.length} change${outbox.length > 1 ? 's' : ''} waiting` : 'saving locally'}`;
 }
+
+let lastTasksJson = '';
 
 async function fetchTasks() {
   try {
+    if (!(await flushOutbox())) throw new Error('offline');
     const res = await fetch(`${API}/tasks`);
     if (!res.ok) throw new Error("Server offline");
 
@@ -535,8 +594,19 @@ async function fetchTasks() {
   }
 
   setApiStatus(state.isServerOnline);
+  const json = JSON.stringify(state.tasks);
+  if (json === lastTasksJson) return; // nothing changed: keep the DOM (and keyboard focus) as it is
+  lastTasksJson = json;
   saveToLocalStorage();
   renderDashboard();
+}
+
+// Every 5 s pick up what agents changed. Skip while the person is busy so nothing jumps under them.
+function autoRefresh() {
+  const modalOpen = [...document.querySelectorAll('.modal')].some(m => !m.classList.contains('hidden'));
+  if (document.hidden || state.dragging || modalOpen) return;
+  fetchTasks();
+  if (state.activeTab === 'audit') fetchAuditLogs();
 }
 
 async function fetchAuditLogs() {
@@ -544,8 +614,7 @@ async function fetchAuditLogs() {
     const res = await fetch(`${API}/audit`);
     if (!res.ok) throw new Error();
     const data = await res.json();
-    // Sort by real time: stored timestamps mix UTC and local formats, so the server's string sort is unreliable
-    state.logs = (Array.isArray(data) ? data : []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    state.logs = Array.isArray(data) ? data : [];
     saveToLocalStorage();
   } catch (err) {
     const storedLogs = localStorage.getItem('mcp_engine_logs');
@@ -555,7 +624,10 @@ async function fetchAuditLogs() {
 }
 
 const ACTIVITY_FILTERS = ['all', 'agent', 'human'];
-const isAgentLog = (log) => (log.actor || '').toUpperCase().includes('AI');
+// Agents log as 'AI:<name>' (older entries: 'AI_AGENT'); people log as 'USER'
+const isAgentActor = (actor) => /^AI\b|^AI[_:]/i.test(actor || '');
+const isAgentLog = (log) => isAgentActor(log.actor);
+const agentName = (actor) => (actor || '').includes(':') ? actor.slice(actor.indexOf(':') + 1) : 'AI agent';
 
 function setActivityFilter(filter) {
   state.activityFilter = filter;
@@ -575,7 +647,15 @@ function renderAuditLogs() {
   document.getElementById('n-agent').textContent = agentCount;
   document.getElementById('n-human').textContent = logs.length - agentCount;
 
-  const shown = logs.filter(log => state.activityFilter === 'all' || (state.activityFilter === 'agent') === isAgentLog(log));
+  // Agent filter: also narrow to one agent by name
+  const names = [...new Set(logs.filter(isAgentLog).map(l => agentName(l.actor)))].sort();
+  const picker = document.getElementById('agent-name-filter');
+  picker.classList.toggle('hidden', state.activityFilter !== 'agent');
+  if (!names.includes(state.agentName)) state.agentName = 'all';
+  picker.innerHTML = `<option value="all">All agents</option>` + names.map(n => `<option value="${esc(n)}" ${n === state.agentName ? 'selected' : ''}>${esc(n)}</option>`).join('');
+
+  const shown = logs.filter(log => state.activityFilter === 'all' || (state.activityFilter === 'agent') === isAgentLog(log))
+    .filter(log => state.activityFilter !== 'agent' || state.agentName === 'all' || agentName(log.actor) === state.agentName);
   if (shown.length === 0) {
     const who = { all: 'anyone', agent: 'the AI agent', human: 'a person' }[state.activityFilter];
     container.innerHTML = `<li><div class="empty"><h3>Nothing yet</h3><p>No activity from ${who} so far.</p></div></li>`;
@@ -590,7 +670,7 @@ function renderAuditLogs() {
         <div class="log-top">
           <span class="badge-key">${esc(log.action)}</span>
           ${log.details?.id ? `<span class="chip">#${esc(log.details.id)}</span>` : ''}
-          <span class="chip ${agent ? 'tone-6' : ''}"><i class="fa-solid ${agent ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${esc(log.actor || 'USER')}</span>
+          <span class="chip ${agent ? 'tone-6' : ''}"><i class="fa-solid ${agent ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${esc(agent ? agentName(log.actor) : (log.actor || 'USER'))}</span>
           <time>${logTime(log.timestamp)}</time>
         </div>
         ${log.details?.title && log.details.title !== getLogUpdateText(log) ? `<p class="log-title">${esc(log.details.title)}</p>` : ''}
@@ -628,6 +708,11 @@ function updateLiveTimers() {
     const el = document.getElementById(`active-timer-${t.id}`);
     if (el) el.textContent = `Active ${getElapsed(t.started_at)}`;
   });
+}
+
+// Past its due date (local calendar day) and not completed
+function isOverdue(t) {
+  return Boolean(t.due_date) && normalizeStatus(t.status) !== 'completed' && t.due_date < dateKey(new Date());
 }
 
 function timeBadge(t, statusKey) {
@@ -702,14 +787,16 @@ function renderDashboard() {
     card.onclick = (e) => { if (!e.target.closest('button')) openDetailModal(t.id); };
     card.onkeydown = (e) => { if (e.key === 'Enter' && e.target === card) openDetailModal(t.id); };
 
-    const isAI = (t.creator || '').toUpperCase() === 'AI';
+    const isAI = isAgentActor(t.creator);
+    const overdue = isOverdue(t);
     card.innerHTML = `
       <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
       ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
       <div class="task-foot">
-        <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? 'AI agent' : 'Human'}</span>
+        <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? esc(agentName(t.creator)) : 'Human'}</span>
         ${timeBadge(t, statusKey)}
-        ${t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
+        ${overdue ? `<span class="chip tone-5"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>&nbsp;Overdue · ${esc(t.due_date)}</span>`
+          : t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
         <span class="task-actions">
           <button class="btn btn-round btn-sm" onclick="openTaskModal('${esc(t.id)}')" aria-label="Edit ${esc(t.title || 'task')}" title="Edit"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
           <button class="btn btn-round btn-sm btn-warn" onclick="deleteTask('${esc(t.id)}')" aria-label="Delete ${esc(t.title || 'task')}" title="Delete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
@@ -770,9 +857,11 @@ function setupDragAndDrop() {
     e.dataTransfer.setData('text/plain', card.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
     card.classList.add('dragging');
+    state.dragging = true;
   });
   board.addEventListener('dragend', (e) => {
     e.target.closest('.task')?.classList.remove('dragging');
+    state.dragging = false;
     board.querySelectorAll('.drop-target').forEach(c => c.classList.remove('drop-target'));
   });
   board.addEventListener('dragover', (e) => {
@@ -791,6 +880,82 @@ function setupDragAndDrop() {
     const task = state.tasks.find(t => String(t.id) === String(id));
     if (task && normalizeStatus(task.status) !== col.dataset.status) updateTaskStatus(id, col.dataset.status);
   });
+}
+
+// Touch screens have no native drag and drop: hold a card for 0.3 s, then drag it to a column.
+// A quick swipe still scrolls the page; the page scrolls by itself near the top and bottom edges.
+function setupTouchDrag() {
+  const board = document.querySelector('.board');
+  if (!board) return;
+  let timer = null, drag = null, startX = 0, startY = 0;
+  const colAt = (x, y) => document.elementFromPoint(x, y)?.closest('.col');
+  const highlight = () => board.querySelectorAll('.col').forEach(c => c.classList.toggle('drop-target', c === colAt(drag.x, drag.y)));
+
+  const stop = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!drag) return;
+    drag.ghost.remove();
+    drag.card.classList.remove('dragging');
+    board.querySelectorAll('.drop-target').forEach(c => c.classList.remove('drop-target'));
+    drag = null;
+    state.dragging = false;
+  };
+
+  const autoScroll = () => {
+    if (!drag) return;
+    const edge = 80;
+    if (drag.y < edge) window.scrollBy(0, -12);
+    else if (drag.y > innerHeight - edge) window.scrollBy(0, 12);
+    highlight();
+    requestAnimationFrame(autoScroll);
+  };
+
+  board.addEventListener('touchstart', (e) => {
+    const card = e.target.closest('.task');
+    if (!card || e.target.closest('button') || e.touches.length > 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      const rect = card.getBoundingClientRect();
+      const ghost = card.cloneNode(true);
+      ghost.classList.add('touch-ghost');
+      ghost.setAttribute('aria-hidden', 'true');
+      Object.assign(ghost.style, { width: `${rect.width}px`, left: `${rect.left}px`, top: `${rect.top}px` });
+      document.body.appendChild(ghost);
+      card.classList.add('dragging');
+      drag = { card, ghost, dx: startX - rect.left, dy: startY - rect.top, x: startX, y: startY };
+      state.dragging = true;
+      navigator.vibrate?.(15);
+      requestAnimationFrame(autoScroll);
+    }, 300);
+  }, { passive: true });
+
+  board.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    if (!drag) {
+      if (Math.hypot(t.clientX - startX, t.clientY - startY) > 10) { clearTimeout(timer); timer = null; } // a swipe: let it scroll
+      return;
+    }
+    e.preventDefault(); // the finger is moving a card, not the page
+    drag.x = t.clientX;
+    drag.y = t.clientY;
+    drag.ghost.style.left = `${t.clientX - drag.dx}px`;
+    drag.ghost.style.top = `${t.clientY - drag.dy}px`;
+  }, { passive: false });
+
+  board.addEventListener('touchend', (e) => {
+    if (!drag) return stop();
+    e.preventDefault(); // no click afterwards, so the detail view stays closed
+    const col = colAt(drag.x, drag.y);
+    const id = drag.card.dataset.id;
+    stop();
+    const task = state.tasks.find(t => String(t.id) === String(id));
+    if (col && task && normalizeStatus(task.status) !== col.dataset.status) updateTaskStatus(id, col.dataset.status);
+  });
+  board.addEventListener('touchcancel', stop);
+  board.addEventListener('contextmenu', (e) => { if (drag || timer) e.preventDefault(); });
 }
 
 function formatDate(dateString) {
@@ -870,17 +1035,18 @@ function buildReport(mode, dateStr) {
       title: t.title || 'Untitled',
       description: t.description || '',
       priority: (t.priority || 'medium').toLowerCase(),
-      created_by: (t.creator || '').toUpperCase() === 'AI' ? 'ai_agent' : 'human',
+      created_by: isAgentActor(t.creator) ? 'ai_agent' : 'human',
+      created_by_name: isAgentActor(t.creator) ? agentName(t.creator) : 'person',
       status_now: STATUS_LABEL[status],
       events_in_period: EVENT_ORDER.filter(e => events.has(e)),
       completed_on: completedAt ? dateKey(new Date(completedAt)) : null,
       time_spent: spentMs ? formatDuration(spentMs) : 'not tracked',
       time_spent_ms: spentMs,
       due_date: t.due_date || null,
-      is_overdue: Boolean(t.due_date && t.due_date < today && status !== 'completed'),
+      is_overdue: isOverdue(t),
       subtasks: { done: subtasks.filter(s => s.done).length, total: subtasks.length, items: subtasks.map(s => ({ text: s.content, done: s.done })) },
       activity: logs.slice().reverse().map(l => ({
-        when: localIso(new Date(l.timestamp)), actor: l.actor || 'USER', actor_type: actorType(l), action: l.action, summary: getLogUpdateText(l)
+        when: localIso(new Date(l.timestamp)), actor: isAgentLog(l) ? agentName(l.actor) : (l.actor || 'USER'), actor_type: actorType(l), action: l.action, summary: getLogUpdateText(l)
       }))
     };
   }).filter(Boolean).sort((a, b) =>
@@ -948,7 +1114,8 @@ function buildReport(mode, dateStr) {
     events_in_period: 'What happened to the task inside the period, in order: created, started, moved_to_review, completed, moved_back_to_pending, edited.',
     time_spent: 'Time from start to review/completion (or time so far if still in progress). "not tracked" means no start time was recorded.',
     created_by: '"human" for tasks a person made on the board, "ai_agent" for tasks an AI agent made through MCP.',
-    actor_type: '"human" or "ai_agent": who performed that action.',
+    actor_type: '"human" or "ai_agent": who performed that action. For agents, "actor" is the agent\'s name.',
+    created_by_name: 'The agent\'s name (for example "opencode") when created_by is "ai_agent".',
     is_overdue: 'true when the due date has passed and the task is not completed.',
     completed_on: 'The date (YYYY-MM-DD) the task was completed inside this period, or null.',
     board_now: 'How many tasks are in each column right now, across all time.'
@@ -1069,11 +1236,14 @@ function toggleKey() {
 
 const opencodeSnippet = (key) => JSON.stringify({ 'todo-list-server': {
   type: 'remote', url: `${MCP_URL}/sse`, enabled: true, headers: { Authorization: `Bearer ${key}` } } }, null, 2);
+// --global writes to the user's opencode config, so the key never lands in this repo's committed opencode.json
+const opencodeCommand = (key) => `opencode mcp add todo-list-server --url ${MCP_URL}/sse --header "Authorization=Bearer ${key}" --global`;
 const claudeSnippet = (key) => `claude mcp add --transport sse todo-list-server ${MCP_URL}/sse --header "Authorization: Bearer ${key}"`;
 
 function renderKey() {
   const shown = !state.apiKey ? null : state.showKey ? state.apiKey : `${state.apiKey.slice(0, 6)}${'•'.repeat(26)}`;
   document.getElementById('api-key').textContent = shown || 'Backend offline: start it with task backend';
+  document.getElementById('snippet-opencode-cmd').textContent = opencodeCommand(shown || '<key>');
   document.getElementById('snippet-opencode').textContent = opencodeSnippet(shown || '<key>');
   document.getElementById('snippet-claude').textContent = claudeSnippet(shown || '<key>');
   document.getElementById('key-toggle').innerHTML = state.showKey

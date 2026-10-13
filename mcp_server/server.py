@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 import json
 import logging
@@ -10,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from loguru import logger
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 import requests
 
 # ----------------------------------------------------
@@ -65,239 +66,187 @@ logger.add(
 # ----------------------------------------------------
 # MCP TOOLS WITH FUNCTIONAL LOGGING
 # ----------------------------------------------------
-@mcp.tool()
-def add_task(
-    title: str, description: str = "", priority: str = "medium"
-) -> str:
-    """Add a new task via the FastAPI backend."""
-    logger.info(f"Creating task: '{title}' [Priority: {priority}]")
-    now = datetime.now(timezone.utc).isoformat()
-    task_id = str(int(time.time() * 1000))
+# Tools change one task at a time through GET/PATCH /api/tasks/{id}, so an agent and a person editing
+# different fields of the same task never overwrite each other.
+STATUSES = {"pending": "Pending", "in progress": "In Progress", "needs review": "Needs Review", "completed": "Completed"}
+# The only moves an agent may make (AGENTS.md). Completed is reached through approve_task only.
+NEXT_STATUS = {"Pending": "In Progress", "In Progress": "Needs Review"}
 
+
+def normalize_status(status):
+    """Same mapping as the backend: 'in_progress', 'IN PROGRESS', ... -> 'In Progress'."""
+    return STATUSES.get((status or "").strip().lower().replace("_", " "))
+
+
+def agent_actor(ctx: Context) -> str:
+    """Name for the activity log, e.g. 'AI:opencode': the X-Agent-Name header, else the MCP client's name."""
+    name = None
+    try:
+        request = ctx.request_context.request
+        name = request.headers.get("x-agent-name") if request is not None else None
+        name = name or ctx.session.client_params.clientInfo.name
+    except (AttributeError, ValueError):
+        pass
+    return f"AI:{name or 'agent'}"
+
+
+def api(method, path, **kwargs):
+    """Call the REST API and return its JSON. Raises requests exceptions (404 included)."""
+    response = requests.request(method, f"{BASE_URL}{path}", timeout=5, **kwargs)
+    response.raise_for_status()
+    return response.json()
+
+
+def api_error(task_id, e):
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None and e.response.status_code == 404:
+        return f"Task {task_id} not found."
+    return f"Task API error: {e}"
+
+
+@mcp.tool()
+def add_task(ctx: Context, title: str, description: str = "", priority: str = "medium") -> str:
+    """Add a new task. It starts in Pending."""
+    actor = agent_actor(ctx)
+    logger.info(f"{actor} creating task: '{title}' [Priority: {priority}]")
+    task_id = str(int(time.time() * 1000))
     payload = {
         "id": task_id,
         "title": title,
         "description": description or "",
-        "status": "pending",
+        "status": "Pending",
         "priority": priority.lower() if priority else "medium",
-        "creator": "AI",
-        "created_at": now,
-        "started_at": None,
-        "completed_at": None,
-        "duration_ms": None,
+        "creator": actor,
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "subtasks": [],
-        "actor": "AI_AGENT",
+        "actor": actor,
     }
-
     try:
-        response = requests.post(
-            f"{BASE_URL}/tasks", json=payload, timeout=5
-        )
-        response.raise_for_status()
-        logger.success(f"Task #{task_id} ('{title}') created successfully.")
-        return f"Task created successfully: {title}"
-    except Exception as e:
-        logger.error(f"Failed to create task '{title}': {str(e)}")
-        return f"Error adding task: {str(e)}"
+        api("POST", "/tasks", json=payload)
+        logger.success(f"Task #{task_id} ('{title}') created.")
+        return f"Task created: {title} (id {task_id}, status Pending)."
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to create task '{title}': {e}")
+        return f"Error adding task: {e}"
 
 
 @mcp.tool()
 def get_tasks() -> str:
-    """Fetch all tasks from backend."""
+    """List every task as JSON. Call this before changing any task."""
     logger.info("Fetching tasks list from backend...")
     try:
-        r = requests.get(f"{BASE_URL}/tasks", timeout=3)
-        r.raise_for_status()
-        logger.info("Successfully retrieved tasks list.")
-        return r.text
-    except Exception as e:
-        logger.error(f"Failed to fetch tasks: {str(e)}")
-        return f"Error fetching tasks: {str(e)}"
+        return json.dumps(api("GET", "/tasks"))
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch tasks: {e}")
+        return f"Error fetching tasks: {e}"
 
 
 @mcp.tool()
-def update_task_status(
-    task_id: str, status: str, description: str = ""
-) -> str:
-    """Update task status and description."""
-    logger.info(f"Updating Task #{task_id} status -> '{status}'")
+def update_task_status(ctx: Context, task_id: str, status: str, description: str = "") -> str:
+    """Move a task one step forward: Pending -> In Progress -> Needs Review.
+
+    Moving to Needs Review requires `description` with your results (or subtasks already on the task).
+    To finish a task in Needs Review, call approve_task instead.
+    """
+    actor = agent_actor(ctx)
+    target = normalize_status(status)
+    if not target:
+        return f"Unknown status '{status}'. Use one of: Pending, In Progress, Needs Review."
     try:
-        r = requests.get(f"{BASE_URL}/tasks", timeout=3)
-        tasks = r.json()
-        target = next(
-            (t for t in tasks if str(t.get("id")) == str(task_id)), None
-        )
+        task = api("GET", f"/tasks/{task_id}")
+        current = task["status"]
+        if target == current:
+            return f"Task {task_id} is already {current}."
+        if target == "Completed":
+            return f"Task {task_id} can't be set to Completed directly. Move it to Needs Review, then call approve_task."
+        if NEXT_STATUS.get(current) != target:
+            allowed = NEXT_STATUS.get(current)
+            hint = f"the next step is {allowed}" if allowed else "call approve_task to finish it" if current == "Needs Review" else "it is already finished"
+            logger.warning(f"{actor} tried {current} -> {target} on Task #{task_id}: refused")
+            return f"Can't move task {task_id} from {current} to {target}. Tasks go Pending -> In Progress -> Needs Review -> Completed; {hint}."
+        if target == "Needs Review" and not description.strip() and not task.get("subtasks"):
+            return f"Task {task_id} needs your results before review: pass them in `description` (or add subtasks with update_task_details first)."
 
-        if not target:
-            logger.warning(f"Task #{task_id} not found for status update.")
-            return f"Task {task_id} not found."
-
-        normalized_status = status.lower().replace(" ", "_")
-        now = datetime.now(timezone.utc).isoformat()
-
-        target["status"] = normalized_status
+        changes = {"status": target, "actor": actor}
         if description:
-            target["description"] = description
-        target["actor"] = "AI_AGENT"
-
-        if normalized_status == "in_progress" and not target.get("started_at"):
-            target["started_at"] = now
-        elif normalized_status == "completed":
-            target["completed_at"] = now
-            if target.get("started_at"):
-                start_dt = datetime.fromisoformat(target["started_at"])
-                end_dt = datetime.fromisoformat(now)
-                target["duration_ms"] = int(
-                    (end_dt - start_dt).total_seconds() * 1000
-                )
-
-        res = requests.post(
-            f"{BASE_URL}/tasks", json=target, timeout=3
-        )
-        res.raise_for_status()
-        logger.success(f"Task #{task_id} status updated to '{normalized_status}'.")
-        return f"Success: Task {task_id} updated to '{normalized_status}'."
-    except Exception as e:
-        logger.error(f"Failed to update Task #{task_id}: {str(e)}")
-        return f"Failed to update task: {str(e)}"
+            changes["description"] = description
+        api("PATCH", f"/tasks/{task_id}", json=changes)
+        logger.success(f"{actor} moved Task #{task_id} {current} -> {target}.")
+        return f"Task {task_id} moved from {current} to {target}."
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to update Task #{task_id}: {e}")
+        return api_error(task_id, e)
 
 
 @mcp.tool()
-def update_task_details(
-    task_id: str, description: str, subtasks: list = None
-) -> str:
-    """Attach execution results, work notes, or subtask checklists to a task."""
-    logger.info(f"Updating details/subtasks for Task #{task_id}")
+def update_task_details(ctx: Context, task_id: str, description: str, subtasks: list = None) -> str:
+    """Attach execution results, work notes, or a subtask checklist ([{"content": "...", "done": false}]) to a task."""
+    actor = agent_actor(ctx)
+    logger.info(f"{actor} updating details for Task #{task_id}")
+    changes = {"description": description, "actor": actor}
+    if subtasks is not None:
+        changes["subtasks"] = subtasks
     try:
-        get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
-        get_res.raise_for_status()
-        tasks = get_res.json()
-
-        target_task = next(
-            (t for t in tasks if str(t.get("id")) == str(task_id)), None
-        )
-        if not target_task:
-            logger.warning(f"Task #{task_id} not found for details update.")
-            return f"Error: Task {task_id} not found."
-
-        target_task["description"] = description
-        if subtasks is not None:
-            target_task["subtasks"] = subtasks
-        target_task["actor"] = "AI_AGENT"
-
-        post_res = requests.post(
-            f"{BASE_URL}/tasks", json=target_task, timeout=5
-        )
-        post_res.raise_for_status()
-
+        api("PATCH", f"/tasks/{task_id}", json=changes)
         logger.success(f"Task #{task_id} details updated.")
-        return f"Task {task_id} details updated with execution results."
+        return f"Task {task_id} details updated."
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to update details for Task #{task_id}: {str(e)}")
-        return f"Failed to update task details: {str(e)}"
+        logger.error(f"Failed to update details for Task #{task_id}: {e}")
+        return api_error(task_id, e)
 
 
 @mcp.tool()
-def approve_task(task_id: str) -> str:
-    """Approves a task in 'needs_review' and transitions it to 'completed'."""
-    logger.info(f"Attempting approval for Task #{task_id}")
+def approve_task(ctx: Context, task_id: str) -> str:
+    """Approve a task in Needs Review and move it to Completed."""
+    actor = agent_actor(ctx)
     try:
-        get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
-        get_res.raise_for_status()
-        tasks = get_res.json()
-
-        target_task = next(
-            (t for t in tasks if str(t.get("id")) == str(task_id)), None
-        )
-        if not target_task:
-            logger.warning(f"Task #{task_id} not found for approval.")
-            return f"Error: Task {task_id} not found."
-
-        if target_task.get("status") not in ["needs_review", "Needs Review"]:
-            logger.warning(
-                f"Task #{task_id} status is '{target_task.get('status')}', cannot approve."
-            )
-            return f"Task {task_id} cannot be approved because its status is '{target_task.get('status')}' (must be 'needs_review')."
-
-        now = datetime.now(timezone.utc).isoformat()
-        target_task["status"] = "completed"
-        target_task["completed_at"] = now
-        target_task["actor"] = "AI_AGENT"
-
-        if target_task.get("started_at"):
-            start_dt = datetime.fromisoformat(target_task["started_at"])
-            end_dt = datetime.fromisoformat(now)
-            target_task["duration_ms"] = int(
-                (end_dt - start_dt).total_seconds() * 1000
-            )
-
-        post_res = requests.post(
-            f"{BASE_URL}/tasks", json=target_task, timeout=5
-        )
-        post_res.raise_for_status()
-
-        logger.success(f"Task #{task_id} approved and completed.")
-        return f"Task {task_id} ('{target_task.get('title')}') has been APPROVED and moved to 'completed'."
+        task = api("GET", f"/tasks/{task_id}")
+        if task["status"] != "Needs Review":
+            logger.warning(f"Task #{task_id} is {task['status']}, cannot approve.")
+            return f"Task {task_id} can't be approved: it is {task['status']}, not Needs Review."
+        api("PATCH", f"/tasks/{task_id}", json={"status": "Completed", "actor": actor})
+        logger.success(f"{actor} approved Task #{task_id}.")
+        return f"Task {task_id} ('{task['title']}') approved and moved to Completed."
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to approve Task #{task_id}: {str(e)}")
-        return f"Failed to approve task: {str(e)}"
+        logger.error(f"Failed to approve Task #{task_id}: {e}")
+        return api_error(task_id, e)
 
 
 @mcp.tool()
-def bulk_approve_tasks() -> str:
-    """Approves all tasks currently sitting in 'needs_review' and moves them to 'completed'."""
-    logger.info("Executing bulk approval for tasks in 'needs_review'...")
+def bulk_approve_tasks(ctx: Context) -> str:
+    """Approve every task in Needs Review and move them to Completed."""
+    actor = agent_actor(ctx)
     try:
-        get_res = requests.get(f"{BASE_URL}/tasks", timeout=5)
-        get_res.raise_for_status()
-        tasks = get_res.json()
-
-        approved_count = 0
-        now = datetime.now(timezone.utc).isoformat()
-
-        for task in tasks:
-            if task.get("status") in ["needs_review", "Needs Review"]:
-                task["status"] = "completed"
-                task["completed_at"] = now
-                task["actor"] = "AI_AGENT"
-
-                if task.get("started_at"):
-                    start_dt = datetime.fromisoformat(task["started_at"])
-                    end_dt = datetime.fromisoformat(now)
-                    task["duration_ms"] = int(
-                        (end_dt - start_dt).total_seconds() * 1000
-                    )
-
-                requests.post(f"{BASE_URL}/tasks", json=task, timeout=5)
-                approved_count += 1
-
-        if approved_count == 0:
-            logger.info("No tasks found in 'needs_review' status.")
-            return "No tasks found in 'needs_review' status."
-
-        logger.success(f"Bulk approved {approved_count} task(s).")
-        return f"Successfully approved {approved_count} task(s) and moved them to 'completed'."
+        waiting = [t for t in api("GET", "/tasks") if t["status"] == "Needs Review"]
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed bulk approval: {str(e)}")
-        return f"Failed to bulk approve tasks: {str(e)}"
+        logger.error(f"Failed bulk approval: {e}")
+        return f"Failed to list tasks: {e}"
+    if not waiting:
+        return "No tasks are in Needs Review."
+
+    approved, failed = [], []
+    for task in waiting:
+        try:
+            api("PATCH", f"/tasks/{task['id']}", json={"status": "Completed", "actor": actor})
+            approved.append(task["title"])
+        except requests.exceptions.RequestException as e:
+            failed.append(f"{task['title']} ({e})")
+    logger.success(f"{actor} bulk approved {len(approved)} task(s), {len(failed)} failed.")
+    result = f"Approved {len(approved)} task(s): {', '.join(approved) or 'none'}."
+    return result + (f" Failed: {'; '.join(failed)}." if failed else "")
 
 
 @mcp.tool()
-def delete_task(task_id: str) -> str:
-    """Delete a task via the FastAPI backend."""
-    logger.info(f"Request to delete Task #{task_id}")
+def delete_task(ctx: Context, task_id: str) -> str:
+    """Delete a task."""
+    actor = agent_actor(ctx)
+    logger.info(f"{actor} deleting Task #{task_id}")
     try:
-        response = requests.delete(
-            f"{BASE_URL}/tasks/{task_id}",
-            params={"actor": "AI_AGENT"},
-            timeout=5,
-        )
-        response.raise_for_status()
-        logger.success(f"Task #{task_id} deleted successfully.")
-        return f"Task {task_id} deleted successfully."
+        api("DELETE", f"/tasks/{task_id}", params={"actor": actor})
+        logger.success(f"Task #{task_id} deleted.")
+        return f"Task {task_id} deleted."
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to delete Task #{task_id}: {str(e)}")
-        return f"Failed to delete task via API: {str(e)}"
+        logger.error(f"Failed to delete Task #{task_id}: {e}")
+        return api_error(task_id, e)
 
 
 # ----------------------------------------------------
@@ -306,7 +255,7 @@ def delete_task(task_id: str) -> str:
 # Every MCP request must carry "Authorization: Bearer <key>" (or "X-API-Key: <key>").
 # The key lives in the taskboard backend and is created/rotated from the UI (Agents tab).
 UI_ORIGINS = {"http://127.0.0.1:5500", "http://localhost:5500"}
-KEY_TTL_S = 5  # a rotated key takes effect within this many seconds
+KEY_TTL_S = 3  # with the 1 s watch below, a rotation cuts agents off within 5 seconds
 _key_cache = {"key": None, "at": 0.0}
 AGENTS = {}  # connection id -> {name, version, connected_at, session_id, token}
 
@@ -378,9 +327,29 @@ class AgentGate:
                         conn["session_id"] = m.group(1).decode()
                 await send(message)
 
+            async def until_key_rotated():
+                # Returns once the key this agent connected with is no longer the current key
+                while True:
+                    await asyncio.sleep(1)
+                    key = await current_key()
+                    if key and not secrets.compare_digest(token, key):
+                        return
+
+            app_task = asyncio.ensure_future(self.app(scope, receive, send_and_spy))
+            watch_task = asyncio.ensure_future(until_key_rotated())
             try:
-                return await self.app(scope, receive, send_and_spy)
+                done, _ = await asyncio.wait({app_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
+                if watch_task in done:
+                    logger.warning(f"Agent '{conn['name']}' disconnected: the API key was rotated")
+                    app_task.cancel()
+                    await asyncio.gather(app_task, return_exceptions=True)
+                    with contextlib.suppress(Exception):  # end the SSE stream so the client sees it close
+                        await send({"type": "http.response.body", "body": b"", "more_body": False})
+                else:
+                    await app_task
             finally:
+                watch_task.cancel()
+                app_task.cancel()
                 AGENTS.pop(conn_id, None)
                 logger.info(f"Agent '{conn['name']}' disconnected ({len(AGENTS)} left)")
 

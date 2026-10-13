@@ -65,7 +65,8 @@ Run `task` on its own to list these.
 | `task mcp` | MCP server on :8001. Needs the backend running |
 | `task frontend` | Serve the board on :5500 |
 | `task report` | Print the last 7 days of activity in the terminal |
-| `task check-mcp` | End-to-end check of the API key gate. **Rotates the key at the end** |
+| `task check-api` | Check the REST API in-process on a copy of the database. No server needed |
+| `task check-mcp` | End-to-end check of the MCP server: key gate, task order, agent names. **Rotates the key at the end** |
 
 ## Connect an AI agent
 
@@ -74,10 +75,16 @@ Run `task` on its own to list these.
 Agents need an API key. There is one key, it lives in the database, and you manage it on the board's **Agents** tab: **Show**, **Copy key**, **Rotate key**.
 
 1. Start everything with `task dev` and open the **Agents** tab.
-2. Press **Copy config** (opencode) or **Copy command** (Claude Code) on that tab. The copied text already contains the key.
+2. Press **Copy command** for opencode or Claude Code on that tab (or **Copy config** for opencode's JSON). The copied text already contains the key.
 3. Start your agent. Within 5 seconds it appears under **Connected agents** with its name and version.
 
-**opencode.** Paste the copied config into your opencode config. The `opencode.json` committed in this repo can't hold the key (it would put a secret in git), so it reads it from the `TASKBOARD_MCP_KEY` environment variable instead:
+**opencode.** Run this once (`--global` saves it to your own opencode config, not this repo's committed `opencode.json`):
+
+```bash
+opencode mcp add todo-list-server --url http://127.0.0.1:8001/sse --header "Authorization=Bearer <your key>" --global
+```
+
+Or paste the copied config into your opencode config. The `opencode.json` committed in this repo can't hold the key (it would put a secret in git), so it reads it from the `TASKBOARD_MCP_KEY` environment variable instead:
 
 ```json
 "todo-list-server": {
@@ -99,7 +106,8 @@ Good to know:
 
 - The agent's name comes from the MCP handshake (for example `opencode`). Send an `X-Agent-Name` header to show a name of your choice instead.
 - A missing or wrong key gets `401`. If the REST API is down, the MCP server answers `503`, because it can't check the key.
-- **Rotating** the key cuts off every connected agent within 5 seconds. They show as **Old key: reconnect** until you give them the new key.
+- **Rotating** the key disconnects every connected agent within 5 seconds. They can reconnect once you give them the new key.
+- Everything an agent does is logged under its name (`AI:opencode`, for example), so the Activity tab can show one agent at a time.
 
 ## The task lifecycle
 
@@ -112,7 +120,7 @@ Good to know:
 | **Needs review** | Work is done and waiting for a person to check it | `completed_at`, `duration_ms` |
 | **Completed** | Approved | `completed_at`, `duration_ms` |
 
-Agents must move tasks in this order and attach their results when they hand a task over for review (see [AGENTS.md](AGENTS.md)). People can drag a card to any column.
+The MCP server enforces this for agents: a skipped step is refused with the next allowed step, moving to Needs review requires results, and only `approve_task` / `bulk_approve_tasks` reach Completed. People can drag a card to any column.
 
 ## Using the board
 
@@ -120,13 +128,15 @@ The header has five tabs, a search box (filters the Board and Manager), and **Ne
 
 | Tab | What it's for |
 | --- | --- |
-| **Board** | Kanban columns. Drag a card to change its status. Each card has **Edit** and **Delete** buttons; click the card for details, subtasks and that task's full history. |
+| **Board** | Kanban columns. Drag a card to change its status (on a phone: hold it, then drag). Each card has **Edit** and **Delete** buttons; click the card for details, subtasks and that task's full history. Refreshes itself every 5 seconds. |
 | **Manager** | All tasks in one table with status, creator and duration. |
-| **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**. |
+| **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**, and on Agent pick one agent by name. |
 | **Report** | Builds a JSON summary of a day or a week for an AI to write up (below). |
 | **Agents** | Is the MCP server running, which agents are connected, and the API key. |
 
-Cards made by an agent carry a pink **AI agent** chip; cards made by people say **Human**. If the API is offline, the board keeps working in your browser and the header says **Offline · saving locally**.
+Cards made by an agent carry a pink chip with the agent's name; cards made by people say **Human**. Cards past their due date show **Overdue**. Deleting a task shows an **Undo** button for 8 seconds.
+
+If the API is offline, the board keeps working in your browser and queues your changes; the header says **Offline · N changes waiting**. They are sent, in order, as soon as the API is back.
 
 ### Reports
 
@@ -159,10 +169,10 @@ What a connected agent can call ([details](docs/mcp-tools.md)):
 | --- | --- |
 | `get_tasks` | List every task. Agents call this before changing anything. |
 | `add_task(title, description, priority)` | Create a task (marked as made by an agent) |
-| `update_task_status(task_id, status, description)` | Move a task to the next status |
+| `update_task_status(task_id, status, description)` | Move a task one step forward (refuses skipped steps; review needs results) |
 | `update_task_details(task_id, description, subtasks)` | Attach results, notes or a subtask checklist |
 | `approve_task(task_id)` | Move one task from Needs review to Completed |
-| `bulk_approve_tasks()` | Approve every task in Needs review |
+| `bulk_approve_tasks()` | Approve every task in Needs review; lists any that failed |
 | `delete_task(task_id)` | Delete a task |
 
 ## REST API
@@ -172,7 +182,9 @@ Base URL `http://127.0.0.1:8190/api` ([details](docs/task-api.md)). Browsers may
 | Method and path | What it does |
 | --- | --- |
 | `GET /tasks` | All tasks |
-| `POST /tasks` | Create or update a task (same body for both) |
+| `GET /tasks/{id}` | One task |
+| `POST /tasks` | Create a task, or replace all its fields. `?restore=true` for an undone delete |
+| `PATCH /tasks/{id}` | Change only the fields you send |
 | `DELETE /tasks/{id}` | Delete a task |
 | `GET /audit` | The activity log |
 | `GET /mcp/key` | The current MCP API key |
@@ -185,9 +197,10 @@ backend/
   app.py            REST API (FastAPI)
   database.py       SQLite schema, settings and activity log helpers
   report.py         terminal activity report (task report)
+  check_api.py      API checks on a copy of the database (task check-api)
 mcp_server/
   server.py         MCP tools + the API key gate and agent tracking
-  check_gate.py     end-to-end check of the gate (task check-mcp)
+  check_gate.py     end-to-end MCP checks (task check-mcp)
 frontend/
   index.html        the board (all five tabs)
   script.js         board logic: rendering, drag and drop, reports, agents
@@ -216,7 +229,8 @@ The only optional variable is for opencode run from this repo: the committed `op
 | --- | --- |
 | Header says **Offline · saving locally** | The REST API isn't running. Start it with `task backend` or `task dev`. |
 | Agents tab says **MCP server offline** | Run `task mcp`. It needs the REST API running first. |
-| Agent gets `401` | The key is missing or old (it was rotated). Copy the config or key again from the Agents tab. |
+| Agent gets `401` or is disconnected | The key is missing or old (it was rotated). Copy the config or key again from the Agents tab. |
+| Agent says "Can't move task ... from Pending to Completed" | Working as intended: agents go one step at a time and finish with `approve_task`. |
 | Agent gets `503` | The MCP server can't reach the REST API to check the key. Start the backend. |
 | `task dev` fails with "address already in use" (Windows) | An earlier run left Python processes behind. Find them with `netstat -ano \| findstr ":8190 :8001 :5500"` and stop them with `taskkill /PID <pid> /T /F`. |
 | Backend changes don't show up | The auto-reload sometimes misses edits on Windows. Stop and rerun `task backend`. |

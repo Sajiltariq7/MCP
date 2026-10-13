@@ -46,10 +46,10 @@ AGENTS.md -> invariants/core.md + one rule doc -> this page -> topic page -> sou
 | todo-list-server | The MCP server's name, as agents and `opencode.json` see it | `mcp_server/server.py` |
 | MCP engine | Older name for the board and API (API title, `localStorage` keys) | `backend/app.py`, `frontend/script.js` |
 | Taskboard | The board's current title | `frontend/index.html` |
-| actor | Who made a change, as sent by the caller: `USER` (board) or `AI_AGENT` (MCP) | `backend/app.py` |
+| actor | Who made a change, as sent by the caller: `USER` (board) or `AI:<agent name>` (MCP; older rows `AI_AGENT`) | `backend/app.py` |
 | creator | Who created a task: `human` or `AI` | `backend/database.py` |
 | Needs Review | Work done and documented, waiting for approval | `backend/app.py` |
-| Standalone mode | The board running from `localStorage` while the API is down | `frontend/script.js` |
+| Standalone mode | The board running from `localStorage` while the API is down; changes wait in the outbox | `frontend/script.js` |
 | Tick | The board's mascot, which comments on progress | `frontend/script.js` |
 | activity log | The `activity_logs` table; the board's Activity view | `backend/database.py` |
 
@@ -88,9 +88,6 @@ AGENTS.md -> invariants/core.md + one rule doc -> this page -> topic page -> sou
 
 - The pages were verified against an uncommitted working tree (the folder restructure, port 8190, `Taskfile.yaml`). Re-verify after it is committed, and write the layout ADR.
 - The board was being restyled during verification; recheck [task-board.md](task-board.md) when that work lands.
-- The lifecycle order is not enforced anywhere in code ([flows/task-lifecycle.md](flows/task-lifecycle.md)).
 - The stderr logging rule holds only in the MCP server; the backend has no loguru setup.
-- `bulk_approve_tasks` ignores failed POSTs.
-- Delete events are logged in local time; other events in UTC.
 - The `calculator-server` entry in `opencode.json` uses one machine's absolute paths.
-- No tests and no CI.
+- Checks exist (`task check-api`, `task check-mcp`) but there is no CI.

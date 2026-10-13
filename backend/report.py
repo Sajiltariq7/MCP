@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from database import get_db_connection
 
@@ -7,8 +7,8 @@ def generate_weekly_report(days=7):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Calculate cutoff date string for the past N days
-    cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+    # Stored timestamps are UTC ISO strings, so a UTC cutoff compares correctly as text
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     # Query activity logs recorded within the timeframe
     cursor.execute("""

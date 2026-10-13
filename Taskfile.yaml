@@ -30,8 +30,13 @@ tasks:
     desc: Backend + MCP server + frontend together (Ctrl+C stops all)
     deps: [backend, mcp, frontend]
 
+  check-api:
+    desc: Check the task API in-process on a copy of the database (no server needed)
+    dir: backend
+    cmds: [uv run python check_api.py]
+
   check-mcp:
-    desc: End-to-end check of the MCP API key gate (rotates the key at the end)
+    desc: End-to-end check of the MCP server - key gate, task order, agent names (rotates the key at the end)
     cmds: [uv run python mcp_server/check_gate.py]
 
   report:

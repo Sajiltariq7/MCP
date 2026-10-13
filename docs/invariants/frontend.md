@@ -5,7 +5,8 @@ For the task board. Read [core.md](core.md) first.
 | Rule | Status | Enforced in |
 | --- | --- | --- |
 | The `API` constant in `frontend/script.js` matches the backend port in `Taskfile.yaml` | Convention | Review |
-| The board keeps working from `localStorage` when the API is unreachable | Current | `frontend/script.js` |
+| The board keeps working from `localStorage` when the API is unreachable, and replays queued changes when it is back | Current | `frontend/script.js` (outbox) |
+| Edits to existing tasks send only the changed fields (`PATCH`) | Current | `frontend/script.js` |
 | The board stays static: no build step, served as files | Convention | Review |
 | Every change the board sends to the API carries `actor: USER` | Current | `frontend/script.js` |
 

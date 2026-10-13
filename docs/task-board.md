@@ -10,7 +10,7 @@ The board is plain HTML, CSS, and JavaScript with no build step. `task frontend`
 
 | View | Shows |
 | --- | --- |
-| Board | Four columns, one per status. Drag a card to another column to change its status. Cards show live timers, durations, creator (human or AI agent), and Edit and Delete buttons |
+| Board | Four columns, one per status, each sorted oldest first (`created_at`) and paged 20 cards at a time. One page number for the whole board (as many pages as the fullest column needs), Prev/Next beside the heading, and a `start–end of total` range under each column header; search resets to page 1. Drag a card to another column to change its status. Cards show live timers, durations, creator (human or AI agent), and Edit and Delete buttons |
 | Manager | All tasks as a table |
 | Activity | The activity log from `GET /api/audit`, sorted by real time, filtered by All, Agent (actor contains `AI`) or Human |
 | Report | JSON for a day or a Monday-to-Sunday week, built in the browser from tasks and the log, with `instructions_for_llm` and a `field_guide` so an agent can write the report. Copy or download it |

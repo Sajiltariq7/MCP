@@ -19,7 +19,8 @@ let state = {
   editingTaskId: null,
   isServerOnline: false,
   dragging: false,
-  agentName: 'all'
+  agentName: 'all',
+  page: 1
 };
 
 let liveTimerInterval = null;
@@ -757,6 +758,43 @@ function renderMascot(counts) {
   else line.textContent = 'Everything is done. Good work.';
 }
 
+const PAGE_SIZE = 20; // cards per column per page
+
+function taskCard(t, statusKey) {
+  const card = document.createElement('article');
+  card.className = `card task ${STATUS_TONE[statusKey]}`;
+  card.tabIndex = 0;
+  card.draggable = true;
+  card.dataset.id = t.id;
+  card.setAttribute('aria-label', `${t.title || 'Untitled'}, ${STATUS_LABEL[statusKey]}. Press Enter for details.`);
+  card.onclick = (e) => { if (!e.target.closest('button')) openDetailModal(t.id); };
+  card.onkeydown = (e) => { if (e.key === 'Enter' && e.target === card) openDetailModal(t.id); };
+
+  const isAI = isAgentActor(t.creator);
+  const overdue = isOverdue(t);
+  card.innerHTML = `
+    <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
+    ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
+    <div class="task-foot">
+      <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? esc(agentName(t.creator)) : 'Human'}</span>
+      ${timeBadge(t, statusKey)}
+      ${overdue ? `<span class="chip tone-5"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>&nbsp;Overdue · ${esc(t.due_date)}</span>`
+        : t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
+      <span class="task-actions">
+        <button class="btn btn-round btn-sm" onclick="openTaskModal('${esc(t.id)}')" aria-label="Edit ${esc(t.title || 'task')}" title="Edit"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        <button class="btn btn-round btn-sm btn-warn" onclick="deleteTask('${esc(t.id)}')" aria-label="Delete ${esc(t.title || 'task')}" title="Delete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+      </span>
+    </div>
+  `;
+  return card;
+}
+
+function changePage(step) {
+  state.page += step;
+  renderDashboard(); // clamps the page to what exists
+  document.querySelector('#view-board .section-head')?.scrollIntoView({ block: 'nearest' });
+}
+
 function renderDashboard() {
   const query = (document.getElementById('searchInput')?.value || '').toLowerCase();
   const filtered = state.tasks.filter(t =>
@@ -764,61 +802,45 @@ function renderDashboard() {
     (t.description || '').toLowerCase().includes(query)
   );
 
-  const cols = {
-    pending: document.getElementById('col-pending'),
-    in_progress: document.getElementById('col-progress'),
-    needs_review: document.getElementById('col-review'),
-    completed: document.getElementById('col-completed')
+  const columns = {
+    pending: { el: 'col-pending', count: 'count-pending', range: 'range-pending' },
+    in_progress: { el: 'col-progress', count: 'count-progress', range: 'range-progress' },
+    needs_review: { el: 'col-review', count: 'count-review', range: 'range-review' },
+    completed: { el: 'col-completed', count: 'count-completed', range: 'range-completed' }
   };
 
-  Object.values(cols).forEach(c => { if (c) c.innerHTML = ''; });
+  // Oldest first in every column, so the task that has waited longest is on top
+  const byStatus = { pending: [], in_progress: [], needs_review: [], completed: [] };
+  filtered.forEach(t => byStatus[normalizeStatus(t.status)].push(t));
+  const created = (t) => new Date(t.created_at || 0).getTime();
+  Object.values(byStatus).forEach(list => list.sort((a, b) => created(a) - created(b)));
 
-  const counts = { pending: 0, in_progress: 0, needs_review: 0, completed: 0 };
+  // One page number for the whole board; there are as many pages as the fullest column needs
+  const pages = Math.max(1, ...Object.values(byStatus).map(list => Math.ceil(list.length / PAGE_SIZE)));
+  state.page = Math.min(Math.max(1, state.page), pages);
+  const start = (state.page - 1) * PAGE_SIZE;
 
-  filtered.forEach(t => {
-    const statusKey = normalizeStatus(t.status);
-    if (counts[statusKey] !== undefined) counts[statusKey]++;
+  Object.entries(columns).forEach(([key, ids]) => {
+    const list = byStatus[key];
+    const shown = list.slice(start, start + PAGE_SIZE);
+    const col = document.getElementById(ids.el);
+    col.innerHTML = '';
+    shown.forEach(t => col.appendChild(taskCard(t, key)));
 
-    const card = document.createElement('article');
-    card.className = `card task ${STATUS_TONE[statusKey]}`;
-    card.tabIndex = 0;
-    card.draggable = true;
-    card.dataset.id = t.id;
-    card.setAttribute('aria-label', `${t.title || 'Untitled'}, ${STATUS_LABEL[statusKey]}. Press Enter for details.`);
-    card.onclick = (e) => { if (!e.target.closest('button')) openDetailModal(t.id); };
-    card.onkeydown = (e) => { if (e.key === 'Enter' && e.target === card) openDetailModal(t.id); };
-
-    const isAI = isAgentActor(t.creator);
-    const overdue = isOverdue(t);
-    card.innerHTML = `
-      <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
-      ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
-      <div class="task-foot">
-        <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? esc(agentName(t.creator)) : 'Human'}</span>
-        ${timeBadge(t, statusKey)}
-        ${overdue ? `<span class="chip tone-5"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>&nbsp;Overdue · ${esc(t.due_date)}</span>`
-          : t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
-        <span class="task-actions">
-          <button class="btn btn-round btn-sm" onclick="openTaskModal('${esc(t.id)}')" aria-label="Edit ${esc(t.title || 'task')}" title="Edit"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
-          <button class="btn btn-round btn-sm btn-warn" onclick="deleteTask('${esc(t.id)}')" aria-label="Delete ${esc(t.title || 'task')}" title="Delete"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
-        </span>
-      </div>
-    `;
-
-    if (cols[statusKey]) cols[statusKey].appendChild(card);
-  });
-
-  Object.keys(cols).forEach(key => {
-    if (counts[key] === 0 && cols[key]) {
-      cols[key].innerHTML = `<div class="empty"><p>${query ? 'No matches.' : EMPTY_COLUMN[key]}</p><p>Drop a task here.</p></div>`;
+    if (!list.length) {
+      col.innerHTML = `<div class="empty"><p>${query ? 'No matches.' : EMPTY_COLUMN[key]}</p><p>Drop a task here.</p></div>`;
+    } else if (!shown.length) {
+      col.innerHTML = `<div class="empty"><p>All ${list.length} are on earlier pages.</p><p>Drop a task here.</p></div>`;
     }
+    document.getElementById(ids.count).textContent = list.length;
+    document.getElementById(ids.range).textContent = shown.length ? `${start + 1}–${start + shown.length} of ${list.length}` : '';
   });
 
-  document.getElementById('count-pending').textContent = counts.pending;
-  document.getElementById('count-progress').textContent = counts.in_progress;
-  document.getElementById('count-review').textContent = counts.needs_review;
-  document.getElementById('count-completed').textContent = counts.completed;
+  document.getElementById('page-label').textContent = `Page ${state.page} / ${pages}`;
+  document.getElementById('page-prev').disabled = state.page === 1;
+  document.getElementById('page-next').disabled = state.page === pages;
 
+  const counts = Object.fromEntries(Object.entries(byStatus).map(([key, list]) => [key, list.length]));
   renderMascot(counts);
   renderTableView(filtered);
 }

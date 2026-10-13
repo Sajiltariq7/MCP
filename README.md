@@ -125,7 +125,7 @@ The header has five tabs, a search box (filters the Board and Manager), and **Ne
 
 | Tab | What it's for |
 | --- | --- |
-| **Board** | Kanban columns. Drag a card to change its status (on a phone: hold it, then drag). Each card has **Edit** and **Delete** buttons; click the card for details, subtasks and that task's full history. Refreshes itself every 5 seconds. |
+| **Board** | Kanban columns. Drag a card to change its status (on a phone: hold it, then drag). Each card has **Edit** and **Delete** buttons; click the card for details, subtasks and that task's full history. Each column lists oldest first, 20 cards per page: **Prev** / **Next** beside the heading, and each column shows its range (e.g. `21–40 of 45`). Refreshes itself every 5 seconds. |
 | **Manager** | All tasks in one table with status, creator and duration. |
 | **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**, and on Agent pick one agent by name. |
 | **Report** | Builds a JSON summary of a day or a week for an AI to write up (below). |

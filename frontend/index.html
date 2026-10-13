@@ -25,7 +25,7 @@
     <button class="tab" role="tab" id="nav-agents" aria-selected="false" aria-controls="view-agents" tabindex="-1" onclick="switchTab('agents')">Agents <span class="count" id="n-agents" aria-label="connected agents">0</span></button>
   </div>
   <div class="search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-    <input type="search" id="searchInput" class="input" aria-label="Search tasks" oninput="renderDashboard()" placeholder="Search tasks…"></div>
+    <input type="search" id="searchInput" class="input" aria-label="Search tasks" oninput="state.page = 1; renderDashboard()" placeholder="Search tasks…"></div>
   <div class="bar-actions">
     <span id="api-status" class="status" role="status"><span class="live-dot" aria-hidden="true"></span>Connecting…</span>
     <button class="btn btn-sm btn-round" onclick="fetchTasks(); fetchAuditLogs()" aria-label="Refresh data"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i></button>
@@ -47,22 +47,33 @@
 
   <!-- VIEW 1: KANBAN BOARD -->
   <section id="view-board" role="tabpanel" aria-labelledby="nav-board">
-    <div class="section-head"><h1>The board</h1><p>Drag a card to another column to change its status.</p></div>
+    <div class="section-head">
+      <div><h1>The board</h1><p>Drag a card to another column to change its status. Oldest first, 20 per page.</p></div>
+      <nav class="pager" aria-label="Board pages">
+        <button class="btn btn-sm" id="page-prev" onclick="changePage(-1)"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Prev</button>
+        <span class="pager-label" id="page-label" aria-live="polite">Page 1 / 1</span>
+        <button class="btn btn-sm" id="page-next" onclick="changePage(1)">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>
+      </nav>
+    </div>
     <div class="board">
       <div class="col" data-status="pending">
         <div class="col-head"><span class="emblem" style="--tone: var(--p1)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-wait"/></svg></span><h2>Pending</h2><span id="count-pending" class="count">0</span></div>
+        <p class="col-range" id="range-pending"></p>
         <div id="col-pending" class="col-list"></div>
       </div>
       <div class="col" data-status="in_progress">
         <div class="col-head"><span class="emblem" style="--tone: var(--p2)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-go"/></svg></span><h2>In progress</h2><span id="count-progress" class="count">0</span></div>
+        <p class="col-range" id="range-progress"></p>
         <div id="col-progress" class="col-list"></div>
       </div>
       <div class="col" data-status="needs_review">
         <div class="col-head"><span class="emblem" style="--tone: var(--p4)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-review"/></svg></span><h2>Needs review</h2><span id="count-review" class="count">0</span></div>
+        <p class="col-range" id="range-review"></p>
         <div id="col-review" class="col-list"></div>
       </div>
       <div class="col" data-status="completed">
         <div class="col-head"><span class="emblem" style="--tone: var(--p3)"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#e-done"/></svg></span><h2>Completed</h2><span id="count-completed" class="count">0</span></div>
+        <p class="col-range" id="range-completed"></p>
         <div id="col-completed" class="col-list"></div>
       </div>
     </div>

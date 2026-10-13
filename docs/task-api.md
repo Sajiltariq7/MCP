@@ -1,10 +1,10 @@
 # Task API and storage
 
 **Status:** Built. A FastAPI service owns the SQLite database and is the only writer of tasks and the activity log.
-**Verified:** 2026-10-13 at 6bdfa0e (uncommitted working tree)
+**Verified:** 2026-10-13 at 7e3d6ae
 **Source:** `backend/app.py`, `backend/database.py`, `backend/report.py`
 
-Everything that changes a task, from the board or from an agent, goes through this API ([ADR 0003](adrs/0003-agents-use-mcp-server-over-rest-api.md)). It listens on `127.0.0.1:8190` with CORS open to any origin.
+Everything that changes a task, from the board or from an agent, goes through this API ([ADR 0003](adrs/0003-agents-use-mcp-server-over-rest-api.md)). It listens on `127.0.0.1:8190`. Browsers may call it only from the board (`http://127.0.0.1:5500` or `http://localhost:5500`), so other websites can't read the MCP key or change tasks.
 
 ## Routes
 
@@ -14,6 +14,8 @@ Everything that changes a task, from the board or from an agent, goes through th
 | `POST /api/tasks` | Creates the task if the `id` is new, otherwise replaces its fields (upsert) | `tasks` row, one `activity_logs` row (`CREATE_TASK` or `UPDATE_TASK`) |
 | `DELETE /api/tasks/{id}?actor=` | Deletes the task, 404 if missing | Deletes the row, one `DELETE_TASK` log row |
 | `GET /api/audit` | Returns the activity log, newest first | Nothing |
+| `GET /api/mcp/key` | Returns the MCP API key | Nothing |
+| `POST /api/mcp/key/rotate` | Makes a new key (`tb_` + 32 random URL-safe characters); the old one stops working | `settings` row, one `ROTATE_KEY` log row |
 
 There is no single-task GET. Callers fetch the whole list and pick the task out.
 
@@ -36,6 +38,7 @@ Database file: `data/tasks.db` under the repo root, created on first start by `i
 | --- | --- |
 | `tasks` | `id` (text key), `title`, `description`, `status`, `priority`, `due_date`, `creator`, `created_at`, `started_at`, `completed_at`, `duration_ms`, `subtasks` (JSON text) |
 | `activity_logs` | `id`, `timestamp`, `actor`, `action`, `entity_type`, `entity_id`, `details` |
+| `settings` | `key`, `value`. Holds `mcp_api_key`, created on first start |
 
 `actor` is whatever the caller sends: the board sends `USER`, the MCP server sends `AI_AGENT`. Nothing checks it.
 
@@ -45,7 +48,7 @@ Database file: `data/tasks.db` under the repo root, created on first start by `i
 
 ## Not built yet
 
-- Authentication. Any local process can read, change, or delete tasks and choose its own `actor`.
+- Authentication on this API. Any local process can read the MCP key, change or delete tasks, and choose its own `actor`; only browsers on other origins are blocked. The key protects the [MCP server](mcp-tools.md), not this API.
 - Lifecycle checks on the server.
 - Tests.
 

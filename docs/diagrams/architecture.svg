@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 570" width="980" height="570" role="img" aria-labelledby="t d">
+<title id="t">Taskboard architecture</title>
+<desc id="d">The task board (port 5500) and the MCP server (port 8001) both call the REST API (port 8190), which stores tasks, the activity log and the MCP API key in SQLite. AI agents connect to the MCP server with the API key. The board asks the MCP server which agents are connected.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#07112a" stroke="#07112a" stroke-width="1.5" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrow-light" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#ffe08a" stroke="#07112a" stroke-width="1.2" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<rect x="2" y="2" width="976" height="566" rx="24" fill="#20437f" stroke="#07112a" stroke-width="4"/>
+<text x="40" y="62" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="30" font-weight="700" fill="#f4f8ff">How the pieces talk</text><text x="40" y="90" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#d2e0fa">One REST API owns the data. People use the board, AI agents use MCP.</text>
+<g transform="translate(820 20) scale(1.05)"><g stroke="#07112a" stroke-linejoin="round" stroke-linecap="round">
+<rect x="18" y="14" width="64" height="80" rx="12" fill="#b4c8ff" stroke-width="4.5"/>
+<rect x="27" y="27" width="46" height="58" rx="6" fill="#f8fbff" stroke-width="3"/>
+<rect x="36" y="6" width="28" height="15" rx="5" fill="#ffe08a" stroke-width="4"/>
+<ellipse cx="41" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/><ellipse cx="59" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/>
+<circle cx="42.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/><circle cx="57.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/>
+<path d="M32 34 L46 38 M68 34 L54 38" fill="none" stroke-width="3.8"/>
+<path d="M45 59 Q50 63 55 59" fill="none" stroke-width="3"/>
+<path d="M33 74 L37 78 L44 70 M49 74 H66" fill="none" stroke-width="3.2"/></g></g>
+<rect x="45" y="135" width="260" height="150" rx="16" fill="#07112a"/>
+<rect x="40" y="130" width="260" height="150" rx="16" fill="#b4c8ff" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(54 142) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<rect x="12" y="18" width="76" height="64" rx="10" fill="#f8fbff"/>
+<path d="M12 34 H88" fill="none"/>
+<rect x="20" y="42" width="16" height="30" rx="4" fill="#b4c8ff" stroke-width="3.5"/>
+<rect x="42" y="42" width="16" height="20" rx="4" fill="#ffe08a" stroke-width="3.5"/>
+<rect x="64" y="42" width="16" height="26" rx="4" fill="#b9f0d8" stroke-width="3.5"/></g></g>
+<text x="104" y="166" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">Task board</text>
+<text x="58" y="196" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Your browser</text>
+<text x="58" y="219" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">127.0.0.1:5500</text>
+<text x="58" y="242" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">frontend/</text>
+<rect x="45" y="385" width="260" height="150" rx="16" fill="#07112a"/>
+<rect x="40" y="380" width="260" height="150" rx="16" fill="#ffb8dc" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(54 392) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<path d="M50 10 V22" fill="none"/><circle cx="50" cy="9" r="5" fill="#ffe08a"/>
+<rect x="18" y="22" width="64" height="52" rx="14" fill="#f8fbff"/>
+<circle cx="38" cy="46" r="7" fill="#9fe4f0"/><circle cx="62" cy="46" r="7" fill="#9fe4f0"/>
+<path d="M40 62 H60" fill="none"/><path d="M10 40 V56 M90 40 V56" fill="none"/>
+<rect x="30" y="74" width="40" height="16" rx="5" fill="#ffb8dc"/></g></g>
+<text x="104" y="416" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">AI agent</text>
+<text x="58" y="446" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">opencode, Claude Code, ...</text>
+<text x="58" y="469" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">sends the API key</text>
+<text x="58" y="492" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">as a Bearer header</text>
+<rect x="375" y="135" width="260" height="150" rx="16" fill="#07112a"/>
+<rect x="370" y="130" width="260" height="150" rx="16" fill="#ffe08a" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(384 142) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<rect x="16" y="18" width="68" height="28" rx="8" fill="#f8fbff"/><rect x="16" y="54" width="68" height="28" rx="8" fill="#f8fbff"/>
+<circle cx="30" cy="32" r="4" fill="#b9f0d8"/><circle cx="30" cy="68" r="4" fill="#b9f0d8"/>
+<path d="M48 32 H70 M48 68 H70" fill="none"/></g></g>
+<text x="434" y="166" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">REST API</text>
+<text x="388" y="196" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">FastAPI</text>
+<text x="388" y="219" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">127.0.0.1:8190/api</text>
+<text x="388" y="242" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">backend/</text>
+<rect x="375" y="385" width="260" height="150" rx="16" fill="#07112a"/>
+<rect x="370" y="380" width="260" height="150" rx="16" fill="#9fe4f0" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(384 392) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<circle cx="32" cy="50" r="20" fill="#ffe08a"/><circle cx="32" cy="50" r="7" fill="#f8fbff"/>
+<path d="M52 50 H88 M74 50 V64 M86 50 V60" fill="none"/></g></g>
+<text x="434" y="416" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">MCP server</text>
+<text x="388" y="446" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">checks the API key</text>
+<text x="388" y="469" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">127.0.0.1:8001/sse</text>
+<text x="388" y="492" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">mcp_server/</text>
+<rect x="705" y="135" width="240" height="150" rx="16" fill="#07112a"/>
+<rect x="700" y="130" width="240" height="150" rx="16" fill="#b9f0d8" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(714 142) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round">
+<path d="M20 22 V78 C20 90 80 90 80 78 V22" fill="#f8fbff"/>
+<ellipse cx="50" cy="22" rx="30" ry="11" fill="#b9f0d8"/>
+<path d="M20 50 C20 62 80 62 80 50" fill="none"/></g></g>
+<text x="764" y="166" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="22" font-weight="600" fill="#07112a">SQLite</text>
+<text x="718" y="196" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">tasks, activity log,</text>
+<text x="718" y="219" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">MCP API key</text>
+<text x="718" y="242" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="14" font-weight="700" fill="#1f2d52">data/tasks.db</text>
+<path d="M305 205 H358" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="306.44" y="165" width="51.120000000000005" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="332.0" y="183" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">JSON</text>
+<path d="M635 205 H688" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="640.08" y="165" width="43.84" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="662.0" y="183" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">SQL</text>
+<path d="M305 455 H358" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="310.08" y="415" width="43.84" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="332.0" y="433" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">SSE</text>
+<path d="M500 375 V292" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="401.64" y="321" width="196.72000000000003" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="500.0" y="339" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">HTTP: tools call the API</text>
+<path d="M220 285 C240 340 300 360 362 400" fill="none" stroke="#07112a" stroke-width="7" stroke-linecap="round" stroke-dasharray="2 9"/><path d="M220 285 C240 340 300 360 362 400" fill="none" stroke="#ffe08a" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-light)" stroke-dasharray="2 9"/>
+<rect x="80.71999999999998" y="323" width="218.56000000000003" height="26" rx="13" fill="#ffe08a" stroke="#07112a" stroke-width="2.5"/><text x="190.0" y="341" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">who is connected? (/status)</text>
+<text x="700" y="330" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="600" fill="#d2e0fa">Ports are fixed and local only.</text>
+<text x="700" y="354" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="600" fill="#d2e0fa">Start everything with:</text>
+<rect x="700" y="368" width="150" height="38" rx="10" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/>
+<text x="716" y="393" font-family="'Geist Mono', Consolas, 'Courier New', monospace" font-size="17" font-weight="700" fill="#07112a">task dev</text>
+</svg>

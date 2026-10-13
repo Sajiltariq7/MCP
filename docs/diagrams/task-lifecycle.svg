@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 470" width="980" height="470" role="img" aria-labelledby="t d">
+<title id="t">Task lifecycle</title>
+<desc id="d">Tasks move from Pending to In progress (records started_at), to Needs review (records duration), to Completed (approved by a person or approve_task). On the board a card can be dragged to any column.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#07112a" stroke="#07112a" stroke-width="1.5" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrow-light" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#ffe08a" stroke="#07112a" stroke-width="1.2" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<rect x="2" y="2" width="976" height="466" rx="24" fill="#20437f" stroke="#07112a" stroke-width="4"/>
+<text x="40" y="62" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="30" font-weight="700" fill="#f4f8ff">A task's life</text><text x="40" y="90" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#d2e0fa">Every task moves left to right. Each step records a timestamp.</text>
+<rect x="45" y="125" width="200" height="140" rx="16" fill="#07112a"/>
+<rect x="40" y="120" width="200" height="140" rx="16" fill="#b4c8ff" stroke="#07112a" stroke-width="3"/>
+<text x="58" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="21" font-weight="600" fill="#07112a">Pending</text>
+<text x="58" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">created by a</text>
+<text x="58" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">person or an agent</text>
+<path d="M246 190 H278" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="285" y="125" width="200" height="140" rx="16" fill="#07112a"/>
+<rect x="280" y="120" width="200" height="140" rx="16" fill="#9fe4f0" stroke="#07112a" stroke-width="3"/>
+<text x="298" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="21" font-weight="600" fill="#07112a">In progress</text>
+<text x="298" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">records started_at</text>
+<text x="298" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">timer starts</text>
+<path d="M486 190 H518" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="525" y="125" width="200" height="140" rx="16" fill="#07112a"/>
+<rect x="520" y="120" width="200" height="140" rx="16" fill="#ffe08a" stroke="#07112a" stroke-width="3"/>
+<text x="538" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="21" font-weight="600" fill="#07112a">Needs review</text>
+<text x="538" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">agent attaches notes</text>
+<text x="538" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">records duration</text>
+<path d="M726 190 H758" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="765" y="125" width="200" height="140" rx="16" fill="#07112a"/>
+<rect x="760" y="120" width="200" height="140" rx="16" fill="#b9f0d8" stroke="#07112a" stroke-width="3"/>
+<text x="778" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="21" font-weight="600" fill="#07112a">Completed</text>
+<text x="778" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">approved by a person</text>
+<text x="778" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">or approve_task</text>
+<rect x="230.8" y="283" width="58.400000000000006" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="260.0" y="301" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">start</text>
+<rect x="427.12" y="283" width="145.76" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="500.0" y="301" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">submit for review</text>
+<rect x="703.52" y="283" width="72.96000000000001" height="26" rx="13" fill="#f8fbff" stroke="#07112a" stroke-width="2.5"/><text x="740.0" y="301" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">approve</text>
+<path d="M860 330 C860 380 140 380 140 272" fill="none" stroke="#07112a" stroke-width="7" stroke-linecap="round" stroke-dasharray="2 9"/><path d="M860 330 C860 380 140 380 140 272" fill="none" stroke="#ffe08a" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-light)" stroke-dasharray="2 9"/>
+<rect x="321.55999999999995" y="367" width="356.88000000000005" height="26" rx="13" fill="#ffe08a" stroke="#07112a" stroke-width="2.5"/><text x="500.0" y="385" text-anchor="middle" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="13" font-weight="700" fill="#07112a">on the board you can drag a card to any column</text>
+<text x="40" y="440" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="600" fill="#d2e0fa">Agents must go in order: Pending, In progress, Needs review, Completed (see AGENTS.md).</text>
+</svg>

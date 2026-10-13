@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 470" width="980" height="470" role="img" aria-labelledby="t d">
+<title id="t">Connecting an AI agent</title>
+<desc id="d">1: make or rotate the API key on the Agents tab. 2: paste the config into the agent. 3: the agent connects to /sse with an Authorization Bearer header and the MCP server checks the key. 4: the agent appears by name and its tools change tasks through the REST API. A wrong or missing key gets 401.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#07112a" stroke="#07112a" stroke-width="1.5" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrow-light" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+    <path d="M1 1 L8 5 L1 9 Z" fill="#ffe08a" stroke="#07112a" stroke-width="1.2" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<rect x="2" y="2" width="976" height="466" rx="24" fill="#20437f" stroke="#07112a" stroke-width="4"/>
+<text x="40" y="62" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="30" font-weight="700" fill="#f4f8ff">Connecting an agent</text><text x="40" y="90" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="16" font-weight="500" fill="#d2e0fa">No OAuth. One local API key, made and rotated on the board.</text>
+<rect x="45" y="125" width="205" height="170" rx="16" fill="#07112a"/>
+<rect x="40" y="120" width="205" height="170" rx="16" fill="#ffe08a" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(54 132) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<circle cx="32" cy="50" r="20" fill="#ffe08a"/><circle cx="32" cy="50" r="7" fill="#f8fbff"/>
+<path d="M52 50 H88 M74 50 V64 M86 50 V60" fill="none"/></g></g>
+<text x="104" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="20" font-weight="600" fill="#07112a">1  Make a key</text>
+<text x="58" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Agents tab on the board.</text>
+<text x="58" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Show, copy or rotate.</text>
+<text x="58" y="232" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Saved in SQLite.</text>
+<path d="M251 205 H267" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="278" y="125" width="205" height="170" rx="16" fill="#07112a"/>
+<rect x="273" y="120" width="205" height="170" rx="16" fill="#b4c8ff" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(287 132) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<rect x="12" y="18" width="76" height="64" rx="10" fill="#f8fbff"/>
+<path d="M12 34 H88" fill="none"/>
+<rect x="20" y="42" width="16" height="30" rx="4" fill="#b4c8ff" stroke-width="3.5"/>
+<rect x="42" y="42" width="16" height="20" rx="4" fill="#ffe08a" stroke-width="3.5"/>
+<rect x="64" y="42" width="16" height="26" rx="4" fill="#b9f0d8" stroke-width="3.5"/></g></g>
+<text x="337" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="20" font-weight="600" fill="#07112a">2  Configure</text>
+<text x="291" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Paste the config into</text>
+<text x="291" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">opencode or Claude Code.</text>
+<text x="291" y="232" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Key goes in a header.</text>
+<path d="M484 205 H500" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="511" y="125" width="205" height="170" rx="16" fill="#07112a"/>
+<rect x="506" y="120" width="205" height="170" rx="16" fill="#9fe4f0" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(520 132) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<rect x="16" y="18" width="68" height="28" rx="8" fill="#f8fbff"/><rect x="16" y="54" width="68" height="28" rx="8" fill="#f8fbff"/>
+<circle cx="30" cy="32" r="4" fill="#b9f0d8"/><circle cx="30" cy="68" r="4" fill="#b9f0d8"/>
+<path d="M48 32 H70 M48 68 H70" fill="none"/></g></g>
+<text x="570" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="20" font-weight="600" fill="#07112a">3  Connect</text>
+<text x="524" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Agent opens /sse with</text>
+<text x="524" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Authorization: Bearer</text>
+<text x="524" y="232" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">&lt;key&gt;. Server checks it.</text>
+<path d="M717 205 H733" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="744" y="125" width="205" height="170" rx="16" fill="#07112a"/>
+<rect x="739" y="120" width="205" height="170" rx="16" fill="#ffb8dc" stroke="#07112a" stroke-width="3"/>
+<g transform="translate(753 132) scale(0.4)"><g stroke="#07112a" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<path d="M50 10 V22" fill="none"/><circle cx="50" cy="9" r="5" fill="#ffe08a"/>
+<rect x="18" y="22" width="64" height="52" rx="14" fill="#f8fbff"/>
+<circle cx="38" cy="46" r="7" fill="#9fe4f0"/><circle cx="62" cy="46" r="7" fill="#9fe4f0"/>
+<path d="M40 62 H60" fill="none"/><path d="M10 40 V56 M90 40 V56" fill="none"/>
+<rect x="30" y="74" width="40" height="16" rx="5" fill="#ffb8dc"/></g></g>
+<text x="803" y="156" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="20" font-weight="600" fill="#07112a">4  Work</text>
+<text x="757" y="186" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Agent shows up by name.</text>
+<text x="757" y="209" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">Its tools change tasks</text>
+<text x="757" y="232" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">through the REST API.</text>
+<rect x="525" y="340" width="420" height="96" rx="16" fill="#07112a"/>
+<rect x="520" y="335" width="420" height="96" rx="16" fill="#ffb4a8" stroke="#07112a" stroke-width="3"/>
+<text x="540" y="368" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="20" font-weight="600" fill="#07112a">Wrong or missing key: 401</text>
+<text x="540" y="394" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">After a rotation, connected agents are cut off</text>
+<text x="540" y="416" font-family="Geist, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="500" fill="#1f2d52">within 5 seconds until they use the new key.</text>
+<path d="M613 296 V328" fill="none" stroke="#07112a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<g transform="translate(60 330) scale(0.95)"><g stroke="#07112a" stroke-linejoin="round" stroke-linecap="round">
+<rect x="18" y="14" width="64" height="80" rx="12" fill="#b4c8ff" stroke-width="4.5"/>
+<rect x="27" y="27" width="46" height="58" rx="6" fill="#f8fbff" stroke-width="3"/>
+<rect x="36" y="6" width="28" height="15" rx="5" fill="#ffe08a" stroke-width="4"/>
+<ellipse cx="41" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/><ellipse cx="59" cy="46" rx="7" ry="8" fill="#fff" stroke-width="3"/>
+<circle cx="42.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/><circle cx="57.5" cy="47.5" r="3.5" fill="#07112a" stroke="none"/>
+<path d="M32 34 L46 38 M68 34 L54 38" fill="none" stroke-width="3.8"/>
+<path d="M45 59 Q50 63 55 59" fill="none" stroke-width="3"/>
+<path d="M33 74 L37 78 L44 70 M49 74 H66" fill="none" stroke-width="3.2"/></g></g>
+<rect x="170" y="352" width="330" height="56" rx="16" fill="#f8fbff" stroke="#07112a" stroke-width="3"/>
+<path d="M172 372 L158 382 L172 390" fill="#f8fbff" stroke="#07112a" stroke-width="3" stroke-linejoin="round"/>
+<rect x="173" y="370" width="6" height="22" fill="#f8fbff"/>
+<text x="188" y="386" font-family="Fredoka, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif" font-size="17" font-weight="600" fill="#07112a">No key, no entry. I check every call.</text>
+</svg>

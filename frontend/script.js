@@ -21,7 +21,9 @@ let state = {
   isServerOnline: false,
   dragging: false,
   agentName: 'all',
-  page: 1
+  page: 1,
+  creatorFilter: 'all',
+  deleted: []
 };
 
 let liveTimerInterval = null;
@@ -135,6 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupTouchDrag();
   fetchApiKey();
   fetchAgents();
+  fetchDeleted();
   setInterval(fetchAgents, 5000);
   setInterval(autoRefresh, 5000);
 
@@ -148,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ==========================================
    NAVIGATION & TAB SWITCHING
    ========================================== */
-const TABS = ['board', 'list', 'audit', 'report', 'agents'];
+const TABS = ['board', 'list', 'audit', 'report', 'deleted', 'agents'];
 
 function switchTab(tabName) {
   state.activeTab = tabName;
@@ -168,6 +171,7 @@ function switchTab(tabName) {
   if (tabName === 'audit') fetchAuditLogs();
   else if (tabName === 'agents') { fetchApiKey(); fetchAgents(); }
   else if (tabName === 'report') fetchAuditLogs().then(renderReport);
+  else if (tabName === 'deleted') fetchDeleted();
   else renderDashboard();
 }
 
@@ -189,10 +193,19 @@ function openTaskModal(taskId = null) {
   document.getElementById('taskEvidenceInput').value = task ? (task.evidence_type || 'none') : 'screenshot';
   document.getElementById('taskEvidenceNote').value = task?.evidence_note || '';
   document.getElementById('newTaskHint').classList.toggle('hidden', Boolean(task));
+  document.getElementById('taskRefsInput').value = '';
+  showChosenRefs();
   syncEvidenceNote();
 
   modal.classList.remove('hidden');
   document.getElementById('taskTitleInput').focus();
+}
+
+function showChosenRefs() {
+  const files = [...document.getElementById('taskRefsInput').files];
+  document.getElementById('taskRefsChosen').textContent = files.length
+    ? files.map(f => f.name).join(', ')
+    : 'A mockup, a screenshot of the bug, an example: anything that helps do the task.';
 }
 
 // "Another attachment" must say which file; "No evidence" needs no note
@@ -341,11 +354,15 @@ async function saveTask() {
     addLocalAuditLog('CREATE', task.title, 'USER', task.id, 'Task created in Pending');
   }
 
+  const refs = [...document.getElementById('taskRefsInput').files];
   saveToLocalStorage();
   renderDashboard();
   closeTaskModal();
-  if (patch) await write('PATCH', `/tasks/${task.id}`, patch);
-  else await write('POST', '/tasks', taskPayload(task));
+  const saved = patch ? await write('PATCH', `/tasks/${task.id}`, patch) : await write('POST', '/tasks', taskPayload(task));
+  if (refs.length) {
+    if (saved) await uploadAttachments(task.id, refs, 'reference');
+    else showToast('The task is saved locally. Attach the reference files from the task once the API is back.');
+  }
 }
 
 /* ==========================================
@@ -418,17 +435,32 @@ async function updateTaskStatus(taskId, rawNewStatus, comment = '') {
   await write('PATCH', `/tasks/${task.id}`, { status: formattedStatus, actor: 'USER', ...(comment ? { comment } : {}) });
 }
 
-async function deleteTask(taskId) {
-  const taskToDelete = state.tasks.find(t => String(t.id) === String(taskId));
-  if (!taskToDelete) return;
-  closeDetailModal();
-  addLocalAuditLog('DELETE', taskToDelete.title, 'USER', taskToDelete.id, `Task deleted from system (AT: ${getShortTime()})`);
+function deleteTask(taskId) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
+  const status = normalizeStatus(task.status);
+  if (status === 'needs_review' || status === 'completed') {
+    return askReason({
+      title: `Delete "${task.title}"?`,
+      text: `It is ${STATUS_LABEL[status]}, so say why it is being deleted. It moves to the Deleted tab with everything it had.`,
+      label: 'Why delete it?',
+      button: 'Delete',
+      placeholder: 'e.g. Duplicate of another task.',
+      danger: true
+    }, (reason) => removeTask(task, reason));
+  }
+  return removeTask(task, '');
+}
 
-  state.tasks = state.tasks.filter(t => String(t.id) !== String(taskId));
+async function removeTask(task, reason) {
+  closeDetailModal();
+  addLocalAuditLog('DELETE', task.title, 'USER', task.id, `Task deleted${reason ? `: ${reason}` : ''} (AT: ${getShortTime()})`);
+  state.tasks = state.tasks.filter(t => String(t.id) !== String(task.id));
   saveToLocalStorage();
   renderDashboard();
-  showUndo(taskToDelete);
-  await write('DELETE', `/tasks/${encodeURIComponent(taskId)}?actor=USER`);
+  showUndo(task);
+  await write('DELETE', `/tasks/${encodeURIComponent(task.id)}?actor=USER${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`);
+  fetchDeleted();
 }
 
 // A short message at the bottom of the screen, optionally with one action button
@@ -458,6 +490,7 @@ async function restoreTask(task) {
   saveToLocalStorage();
   renderDashboard();
   await write('POST', '/tasks?restore=true', taskPayload(task));
+  fetchDeleted();
 }
 
 /* ==========================================
@@ -473,10 +506,14 @@ const NEXT_HINT = { pending: 'Move it to In progress first.', in_progress: 'Move
 // Going back needs a reason: review -> work, or reopening a completed task (to review or to work)
 const isBackward = (from, to) => (['needs_review', 'completed'].includes(from) && ['in_progress', 'pending'].includes(to)) || (from === 'completed' && to === 'needs_review');
 
+// Two kinds of files: references (material to work from, any time) and evidence (proof, added while In progress)
+const evidenceOf = (t) => (t.attachments || []).filter(a => (a.kind || 'evidence') === 'evidence');
+const referencesOf = (t) => (t.attachments || []).filter(a => a.kind === 'reference');
+
 // What evidence is still missing before review, or null
 function missingEvidence(t) {
   const kind = t.evidence_type || 'none';
-  const files = t.attachments || [];
+  const files = evidenceOf(t);
   const what = t.evidence_note ? `: ${t.evidence_note}` : '';
   if (kind === 'screenshot' && !files.some(a => (a.content_type || '').startsWith('image/'))) return `It needs a screenshot first${what}.`;
   if (kind === 'attachment' && !files.length) return `It needs an attachment first${what}.`;
@@ -512,31 +549,48 @@ function requestMove(taskId, rawTo) {
   return updateTaskStatus(taskId, to);
 }
 
-// Sending a task back from review (or reopening it) needs a reason, which the agent will read
-let pendingMove = null;
-function openReasonModal(task, from, to) {
-  pendingMove = { id: task.id, to };
-  document.getElementById('reasonTitle').textContent = from === 'completed' ? `Reopen to ${STATUS_LABEL[to]}` : `Send back to ${STATUS_LABEL[to]}`;
-  document.getElementById('reasonText').textContent = `"${task.title}" moves from ${STATUS_LABEL[from]} back to ${STATUS_LABEL[to]}.`;
+// One "why?" dialog for everything that needs a reason: sending back, reopening, deleting
+let reasonRequest = null;
+function askReason({ title, text, label, button, placeholder, danger = false }, onSubmit, onCancel = null) {
+  reasonRequest = { onSubmit, onCancel };
+  document.getElementById('reasonTitle').textContent = title;
+  document.getElementById('reasonText').textContent = text;
+  document.getElementById('reasonLabel').textContent = label;
+  const submit = document.getElementById('reasonSubmit');
+  submit.className = `btn ${danger ? 'btn-warn' : 'btn-primary'}`;
+  submit.innerHTML = `<i class="fa-solid ${danger ? 'fa-trash' : 'fa-rotate-left'}" aria-hidden="true"></i> ${esc(button)}`;
   const input = document.getElementById('reasonInput');
   input.value = '';
+  input.placeholder = placeholder;
   document.getElementById('reasonModal').classList.remove('hidden');
   input.focus();
 }
 
+// Sending a task back from review (or reopening it) needs a reason, which the agent will read
+function openReasonModal(task, from, to) {
+  askReason({
+    title: from === 'completed' ? `Reopen to ${STATUS_LABEL[to]}` : `Send back to ${STATUS_LABEL[to]}`,
+    text: `"${task.title}" moves from ${STATUS_LABEL[from]} back to ${STATUS_LABEL[to]}.`,
+    label: 'Why? It is saved on the card, and the agent or person working on it reads it.',
+    button: from === 'completed' ? 'Reopen' : 'Send back',
+    placeholder: 'e.g. The button is still misaligned on mobile.'
+  }, (reason) => updateTaskStatus(task.id, to, reason), () => refreshDetail(task.id));
+}
+
 function closeReasonModal() {
   document.getElementById('reasonModal').classList.add('hidden');
-  if (pendingMove) refreshDetail(pendingMove.id);
-  pendingMove = null;
+  const request = reasonRequest;
+  reasonRequest = null;
+  request?.onCancel?.();
 }
 
 async function submitReason() {
   const reason = document.getElementById('reasonInput').value.trim();
-  if (!reason || !pendingMove) return;
-  const move = pendingMove;
-  pendingMove = null;
+  if (!reason || !reasonRequest) return;
+  const request = reasonRequest;
+  reasonRequest = null;
   document.getElementById('reasonModal').classList.add('hidden');
-  await updateTaskStatus(move.id, move.to, reason);
+  await request.onSubmit(reason);
 }
 
 /* ==========================================
@@ -550,16 +604,21 @@ const fileBase64 = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 
-async function uploadEvidence(taskId, input) {
+function uploadFromInput(taskId, input, kind) {
   const files = [...input.files];
   input.value = '';
+  return uploadAttachments(taskId, files, kind);
+}
+
+// kind: 'reference' (material to work from) or 'evidence' (proof of the work, only while In progress)
+async function uploadAttachments(taskId, files, kind) {
   for (const file of files) {
     if (file.size > MAX_UPLOAD) { showToast(`${file.name} is larger than 10 MB.`); continue; }
     try {
       const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/attachments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, content_base64: await fileBase64(file), actor: 'USER' })
+        body: JSON.stringify({ filename: file.name, content_base64: await fileBase64(file), kind, actor: 'USER' })
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `error ${res.status}`);
     } catch (err) {
@@ -589,14 +648,148 @@ function evidenceChip(t) {
   if (kind === 'none') return '';
   const missing = missingEvidence(t);
   const icon = kind === 'screenshot' ? 'fa-camera' : 'fa-paperclip';
-  const label = missing ? (kind === 'screenshot' ? 'Screenshot needed' : 'Attachment needed') : `${(t.attachments || []).length} attached`;
+  const label = missing ? (kind === 'screenshot' ? 'Screenshot needed' : 'Attachment needed') : `${evidenceOf(t).length} evidence`;
   return `<span class="chip ${missing ? 'tone-4' : 'tone-3'}" title="${esc(missing || 'Evidence attached')}"><i class="fa-solid ${icon}" aria-hidden="true"></i>&nbsp;${label}</span>`;
+}
+
+// An agent asked to delete this In Progress task; a person approves or keeps it
+function deleteRequestBox(t) {
+  const r = t.delete_request;
+  if (!r) return '';
+  const who = isAgentActor(r.by) ? agentName(r.by) : 'Someone';
+  return `<div class="sent-back delete-request">
+      <span><i class="fa-solid fa-trash" aria-hidden="true"></i> <b>${esc(who)} asks to delete it:</b> ${esc(r.reason)}</span>
+      <span class="row">
+        <button class="btn btn-sm btn-warn" onclick="approveDeleteRequest('${esc(t.id)}')">Approve delete</button>
+        <button class="btn btn-sm" onclick="rejectDeleteRequest('${esc(t.id)}')">Keep it</button>
+      </span>
+    </div>`;
+}
+
+function approveDeleteRequest(taskId) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task?.delete_request) return;
+  const r = task.delete_request;
+  return removeTask(task, `Approved deletion requested by ${isAgentActor(r.by) ? agentName(r.by) : r.by}: ${r.reason}`);
+}
+
+function rejectDeleteRequest(taskId) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task?.delete_request) return;
+  const r = task.delete_request;
+  askReason({
+    title: 'Keep this task?',
+    text: `${isAgentActor(r.by) ? agentName(r.by) : 'Someone'} asked to delete "${task.title}": ${r.reason}`,
+    label: "Why keep it? The agent reads this in the task's comments.",
+    button: 'Keep task',
+    placeholder: 'e.g. Still needed for the demo.'
+  }, async (why) => {
+    await write('DELETE', `/tasks/${encodeURIComponent(taskId)}/delete-request?actor=USER&reason=${encodeURIComponent(why)}`);
+    await fetchTasks();
+    refreshDetail(taskId);
+  });
+}
+
+// How each kind of comment is labelled
+function commentLabel(c) {
+  return {
+    sent_back: `Sent back to ${c.to || ''}`,
+    delete_request: 'Asked to delete',
+    delete_rejected: 'Kept (deletion rejected)'
+  }[c.kind] || 'Note';
+}
+
+function referenceChip(t) {
+  const n = referencesOf(t).length;
+  return n ? `<span class="chip tone-2" title="Reference files to work from"><i class="fa-solid fa-image" aria-hidden="true"></i>&nbsp;${n} reference${n > 1 ? 's' : ''}</span>` : '';
 }
 
 // The latest comment, when it is the reason the task was sent back and the task is still where it was sent
 function sentBackComment(t, statusKey) {
   const last = (t.comments || []).at(-1);
   return last?.kind === 'sent_back' && normalizeStatus(last.to) === statusKey ? last : null;
+}
+
+/* ==========================================
+   DELETED TAB: deleted tasks with everything they had
+   ========================================== */
+async function fetchDeleted() {
+  try {
+    const res = await fetch(`${API}/tasks/deleted`);
+    if (!res.ok) throw new Error();
+    state.deleted = await res.json();
+  } catch (err) {
+    return; // offline: keep what we had
+  }
+  renderDeleted();
+}
+
+async function restoreDeleted(taskId, btn) {
+  btn.disabled = true;
+  if (await write('POST', `/tasks/${encodeURIComponent(taskId)}/restore?actor=USER`)) {
+    await fetchTasks();
+    await fetchDeleted();
+    showToast('Task restored to the board.');
+  } else {
+    btn.disabled = false;
+  }
+}
+
+// Gone for good, with its files: the one action here that can't be undone, so it asks first
+async function purgeDeleted(taskId, btn) {
+  const task = state.deleted.find(t => String(t.id) === String(taskId));
+  if (!confirm(`Delete "${task?.title || 'this task'}" forever? Its files are removed too. This can't be undone.`)) return;
+  btn.disabled = true;
+  if (await write('DELETE', `/tasks/deleted/${encodeURIComponent(taskId)}?actor=USER`)) await fetchDeleted();
+  else btn.disabled = false;
+}
+
+function renderDeleted() {
+  const list = document.getElementById('deleted-list');
+  const tasks = state.deleted || [];
+  document.getElementById('n-deleted').textContent = tasks.length;
+  if (!list) return;
+  if (!tasks.length) {
+    list.innerHTML = `<div class="empty"><h3>Nothing deleted</h3><p>Deleted tasks show up here with everything they had, ready to restore.</p></div>`;
+    return;
+  }
+  const when = (ts) => ts ? formatDate(ts) : 'Not yet';
+  const who = (actor) => isAgentActor(actor) ? agentName(actor) : 'Human';
+  list.innerHTML = tasks.map(t => {
+    const statusKey = normalizeStatus(t.status);
+    const subtasks = parseSubtasks(t.subtasks);
+    const refs = referencesOf(t), proof = evidenceOf(t);
+    const evidenceNeed = { screenshot: 'A screenshot', attachment: 'An attachment', none: 'None' }[t.evidence_type || 'none'];
+    return `
+      <article class="card deleted-card ${STATUS_TONE[statusKey]}">
+        <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
+        <div class="row">${statusPill(statusKey)}<span class="chip tone-5"><i class="fa-solid fa-trash" aria-hidden="true"></i>&nbsp;Deleted by ${esc(who(t.deleted_by))} · ${esc(when(t.deleted_at))}</span></div>
+        ${t.delete_reason ? `<p class="sent-back"><b>Why:</b> ${esc(t.delete_reason)}</p>` : ''}
+        ${t.description ? `<p class="deleted-desc">${esc(t.description)}</p>` : ''}
+        <dl class="meta">
+          <div><dt>Created by</dt><dd>${esc(creatorLabel(t.creator))}</dd></div>
+          <div><dt>Created</dt><dd class="mono">${esc(when(t.created_at))}</dd></div>
+          <div><dt>Started</dt><dd class="mono">${esc(when(t.started_at))}</dd></div>
+          <div><dt>Finished</dt><dd class="mono">${esc(when(t.completed_at))}</dd></div>
+          <div><dt>Time spent</dt><dd class="mono">${t.duration_ms >= 1000 ? formatDuration(t.duration_ms) : 'Not tracked'}</dd></div>
+          <div><dt>Due</dt><dd class="mono">${esc(t.due_date || 'None')}</dd></div>
+          <div><dt>Evidence needed</dt><dd>${esc(evidenceNeed)}${t.evidence_note ? `: ${esc(t.evidence_note)}` : ''}</dd></div>
+          <div><dt>Subtasks</dt><dd>${subtasks.filter(s => s.done).length} of ${subtasks.length} done</dd></div>
+        </dl>
+        ${refs.length ? `<p class="field-title">Reference files</p><div class="evidence-grid">${refs.map(evidenceThumb).join('')}</div>` : ''}
+        ${proof.length ? `<p class="field-title">Evidence</p><div class="evidence-grid">${proof.map(evidenceThumb).join('')}</div>` : ''}
+        ${(t.comments || []).length ? `<details><summary>${t.comments.length} comment${t.comments.length > 1 ? 's' : ''}</summary><ul class="comments">${t.comments.slice().reverse().map(c => `
+          <li class="${c.kind === 'sent_back' ? 'sent-back' : 'note-box'}"><span><b>${esc(commentLabel(c))}</b> · ${esc(who(c.author))} · <time>${logTime(c.at)}</time></span><span>${esc(c.text)}</span></li>`).join('')}</ul></details>` : ''}
+        ${subtasks.length ? `<details><summary>${subtasks.length} subtask${subtasks.length > 1 ? 's' : ''}</summary><ul class="comments">${subtasks.map(s => `<li>${s.done ? '✓' : '○'} ${esc(s.content)}</li>`).join('')}</ul></details>` : ''}
+        <div class="row deleted-foot">
+          <span class="row">
+            <button class="btn btn-sm btn-primary" onclick="restoreDeleted('${esc(t.id)}', this)"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Restore</button>
+            <button class="btn btn-sm btn-warn" onclick="purgeDeleted('${esc(t.id)}', this)"><i class="fa-solid fa-trash" aria-hidden="true"></i> Delete forever</button>
+          </span>
+          <span class="badge-key">#${esc(t.id)}</span>
+        </div>
+      </article>`;
+  }).join('');
 }
 
 /* ==========================================
@@ -680,7 +873,28 @@ function openDetailModal(taskId) {
 
   const kind = task.evidence_type || 'none';
   const missing = missingEvidence(task);
-  const files = task.attachments || [];
+  const files = evidenceOf(task);
+  const refs = referencesOf(task);
+  const referencesHtml = `
+    <section class="stack-sm">
+      <h4>Reference files</h4>
+      <p class="soft">Material to work from: mockups, screenshots of the bug, examples. Look at these before starting.</p>
+      ${refs.length ? `<div class="evidence-grid">${refs.map(evidenceThumb).join('')}</div>` : '<p class="soft">No reference files.</p>'}
+      <div class="row">
+        <button class="btn btn-sm" onclick="this.nextElementSibling.click()"><i class="fa-solid fa-image" aria-hidden="true"></i> Add reference</button>
+        <input type="file" multiple hidden aria-label="Add reference files" onchange="uploadFromInput('${esc(task.id)}', this, 'reference')">
+        <span class="hint soft">Any time, up to 10 MB each.</span>
+      </div>
+    </section>`;
+  const evidenceUpload = normStatus === 'in_progress'
+    ? `<div class="row">
+        <button class="btn btn-sm" onclick="this.nextElementSibling.click()"><i class="fa-solid fa-camera" aria-hidden="true"></i> Attach evidence</button>
+        <input type="file" multiple hidden aria-label="Attach evidence" onchange="uploadFromInput('${esc(task.id)}', this, 'evidence')">
+        <span class="hint soft">Proof of the finished work, up to 10 MB each.</span>
+      </div>`
+    : `<p class="hint soft">${normStatus === 'pending'
+        ? 'Evidence is attached once the task is In progress: it is proof of the finished work.'
+        : 'Evidence can be added while the task is In progress.'}</p>`;
   const evidenceHtml = `
     <section class="stack-sm">
       <h4>Evidence</h4>
@@ -688,11 +902,7 @@ function openDetailModal(taskId) {
         : `Needs ${kind === 'screenshot' ? 'a screenshot' : 'an attachment'}${task.evidence_note ? `: ${esc(task.evidence_note)}` : ''}.`}
         ${kind === 'none' ? '' : missing ? '<span class="chip tone-4">Missing</span>' : '<span class="chip tone-3">Attached</span>'}</p>
       ${files.length ? `<div class="evidence-grid">${files.map(evidenceThumb).join('')}</div>` : ''}
-      <div class="row">
-        <button class="btn btn-sm" onclick="this.nextElementSibling.click()"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Attach file</button>
-        <input type="file" multiple hidden aria-label="Attach evidence" onchange="uploadEvidence('${esc(task.id)}', this)">
-        <span class="hint soft">Images or any file, up to 10 MB each.</span>
-      </div>
+      ${evidenceUpload}
     </section>`;
   const comments = task.comments || [];
   const commentsHtml = !comments.length ? '' : `
@@ -700,25 +910,27 @@ function openDetailModal(taskId) {
       <h4>Comments</h4>
       <ul class="comments">${comments.slice().reverse().map(c => `
         <li class="${c.kind === 'sent_back' ? 'sent-back' : 'note-box'}">
-          <span><b>${c.kind === 'sent_back' ? `Sent back to ${esc(c.to || '')}` : 'Note'}</b> · ${esc(isAgentActor(c.author) ? agentName(c.author) : 'Human')} · <time>${logTime(c.at)}</time></span>
+          <span><b>${esc(commentLabel(c))}</b> · ${esc(isAgentActor(c.author) ? agentName(c.author) : 'Human')} · <time>${logTime(c.at)}</time></span>
           <span>${esc(c.text)}</span>
         </li>`).join('')}</ul>
     </section>`;
 
   detailBody.innerHTML = `
     <div class="row"><h3 style="font-size:22px; overflow-wrap:anywhere">${esc(task.title)}</h3><span class="badge-key">#${esc(task.id)}</span>${priorityChip(task.priority)}</div>
+    ${deleteRequestBox(task)}
     <div class="note-box">${esc(task.description || 'No description provided.')}</div>
     <dl class="meta">
       <div><dt><label for="detailStatus">Status</label></dt><dd>
         <select id="detailStatus" class="input input-sm" onchange="requestMove('${esc(task.id)}', this.value)">
           ${['pending', 'in_progress', 'needs_review', 'completed'].map(k => `<option value="${k}" ${k === normStatus ? 'selected' : ''} ${k !== normStatus && !ALLOWED_MOVES[normStatus].includes(k) ? 'disabled' : ''}>${STATUS_LABEL[k]}</option>`).join('')}
         </select></dd></div>
-      <div><dt>Creator</dt><dd>${isAgentActor(task.creator) ? `${esc(agentName(task.creator))} (AI agent)` : 'Human'}</dd></div>
+      <div><dt>Creator</dt><dd>${esc(creatorLabel(task.creator))}</dd></div>
       <div><dt>Due date</dt><dd class="mono">${esc(task.due_date || 'None')}${isOverdue(task) ? ' <span class="chip tone-5">Overdue</span>' : ''}</dd></div>
       <div><dt>Time spent</dt><dd class="mono">${elapsedTime}</dd></div>
       <div><dt>Created</dt><dd class="mono">${formatDate(task.created_at)}</dd></div>
       <div><dt>Subtasks</dt><dd><span class="chip">${completedCount} of ${subtasks.length} done</span></dd></div>
     </dl>
+    ${referencesHtml}
     ${evidenceHtml}
     ${commentsHtml}
     <section class="stack-sm"><h4>Subtasks</h4>${subtasksHtml}</section>
@@ -783,6 +995,7 @@ function autoRefresh() {
   if (document.hidden || state.dragging || modalOpen) return;
   fetchTasks();
   if (state.activeTab === 'audit') fetchAuditLogs();
+  if (state.activeTab === 'deleted') fetchDeleted();
 }
 
 async function fetchAuditLogs() {
@@ -804,6 +1017,8 @@ const ACTIVITY_FILTERS = ['all', 'agent', 'human'];
 const isAgentActor = (actor) => /^AI\b|^AI[_:]/i.test(actor || '');
 const isAgentLog = (log) => isAgentActor(log.actor);
 const agentName = (actor) => (actor || '').includes(':') ? actor.slice(actor.indexOf(':') + 1) : 'AI agent';
+// "opencode (AI agent)", "Unnamed AI agent" (older entries) or "Human"
+const creatorLabel = (actor) => !isAgentActor(actor) ? 'Human' : agentName(actor) === 'AI agent' ? 'Unnamed AI agent' : `${agentName(actor)} (AI agent)`;
 
 function setActivityFilter(filter) {
   state.activityFilter = filter;
@@ -950,9 +1165,11 @@ function taskCard(t, statusKey) {
     <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
     ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
     ${(() => { const c = sentBackComment(t, statusKey); return c ? `<p class="sent-back"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> <b>Sent back:</b> ${esc(c.text)}</p>` : ''; })()}
+    ${deleteRequestBox(t)}
     <div class="task-foot">
       <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? esc(agentName(t.creator)) : 'Human'}</span>
       ${timeBadge(t, statusKey)}
+      ${referenceChip(t)}
       ${evidenceChip(t)}
       ${overdue ? `<span class="chip tone-5"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>&nbsp;Overdue · ${esc(t.due_date)}</span>`
         : t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
@@ -973,10 +1190,9 @@ function changePage(step) {
 
 function renderDashboard() {
   const query = (document.getElementById('searchInput')?.value || '').toLowerCase();
-  const filtered = state.tasks.filter(t =>
-    (t.title || '').toLowerCase().includes(query) ||
-    (t.description || '').toLowerCase().includes(query)
-  );
+  // Fuzzy: typos and abbreviations still match (see searchScore)
+  const scored = state.tasks.map(t => ({ t, score: searchScore(query, t) })).filter(x => x.score > 0);
+  const filtered = scored.map(x => x.t);
 
   const columns = {
     pending: { el: 'col-pending', count: 'count-pending', range: 'range-pending' },
@@ -1018,23 +1234,84 @@ function renderDashboard() {
 
   const counts = Object.fromEntries(Object.entries(byStatus).map(([key, list]) => [key, list.length]));
   renderMascot(counts);
-  renderTableView(filtered);
+  renderTableView(scored, query);
 }
 
-function renderTableView(tasks) {
+/* ==========================================
+   SEARCH (fuzzy) AND THE TASK MANAGER TABLE
+   ========================================== */
+const plain = (s) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+
+// Letters of `q` appear in `w` in order, starting with the same letter: "dshbrd" -> "dashboard"
+function inOrder(q, w) {
+  if (q[0] !== w[0]) return false;
+  let i = 0;
+  for (const ch of w) if (ch === q[i] && ++i === q.length) return true;
+  return false;
+}
+
+// At most one typo (insert, delete, swap or change a letter): "dashbaord" -> "dashboard"
+function oneTypo(a, b) {
+  if (Math.abs(a.length - b.length) > 1 || a === b) return a === b;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) {
+    const swapped = a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+    return swapped || a.slice(i + 1) === b.slice(i + 1);
+  }
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+
+// 0 = no match. Every word of the query must match the title, description or creator:
+// as text (best), as letters in order, or with one typo. Higher scores are better matches.
+function searchScore(query, t) {
+  const words = plain(query).split(/\s+/).filter(Boolean);
+  if (!words.length) return 1;
+  const title = plain(t.title);
+  const text = `${title} ${plain(t.description)} ${plain(isAgentActor(t.creator) ? agentName(t.creator) : 'human')}`;
+  const textWords = text.split(/[^a-z0-9]+/).filter(Boolean);
+  let score = 0;
+  for (const q of words) {
+    if (title.includes(q)) score += 4;
+    else if (text.includes(q)) score += 3;
+    else if (q.length >= 3 && textWords.some(w => inOrder(q, w))) score += 2;
+    else if (q.length >= 4 && textWords.some(w => oneTypo(q, w) || oneTypo(q, w.slice(0, q.length)))) score += 1;
+    else return 0;
+  }
+  return score;
+}
+
+const creatorKey = (t) => isAgentActor(t.creator) ? `agent:${agentName(t.creator)}` : 'human';
+
+function renderTableView(scored, query) {
   const tbody = document.getElementById('task-table-body');
   if (!tbody) return;
-  if (!tasks.length) {
-    tbody.innerHTML = `<tr><td colspan="5"><p class="soft">No tasks found.</p></td></tr>`;
+
+  // Creator filter: All, Human, then every agent that has created a task
+  const picker = document.getElementById('creator-filter');
+  const agents = [...new Set(state.tasks.filter(t => isAgentActor(t.creator)).map(t => agentName(t.creator)))].sort();
+  if (state.creatorFilter !== 'all' && state.creatorFilter !== 'human' && !agents.includes(state.creatorFilter.slice(6))) state.creatorFilter = 'all';
+  picker.innerHTML = [['all', 'All creators'], ['human', 'Human'], ...agents.map(a => [`agent:${a}`, creatorLabel(`AI:${a}`)])]
+    .map(([value, label]) => `<option value="${esc(value)}" ${value === state.creatorFilter ? 'selected' : ''}>${esc(label)}</option>`).join('');
+
+  const rows = scored
+    .filter(({ t }) => state.creatorFilter === 'all' || creatorKey(t) === state.creatorFilter)
+    .sort((a, b) => query ? b.score - a.score : 0) // best matches first while searching
+    .map(({ t }) => t);
+  document.getElementById('manager-count').textContent = `${rows.length} of ${state.tasks.length} tasks`;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><p class="soft">${query || state.creatorFilter !== 'all' ? 'No tasks match. Try fewer words or another creator.' : 'No tasks yet.'}</p></td></tr>`;
     return;
   }
-  tbody.innerHTML = tasks.map(t => {
+  tbody.innerHTML = rows.map(t => {
     const totalTime = t.duration_ms ? formatDuration(t.duration_ms) : (t.started_at ? 'In progress' : 'Not started');
+    const isAI = isAgentActor(t.creator);
     return `
       <tr onclick="openDetailModal('${esc(t.id)}')">
         <td><b>${esc(t.title || 'Untitled')}</b></td>
         <td>${statusPill(normalizeStatus(t.status))}</td>
-        <td><span class="chip ${t.creator === 'AI' ? 'tone-6' : ''}">${esc(t.creator || 'human')}</span></td>
+        <td><span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${esc(isAI ? agentName(t.creator) : 'Human')}</span></td>
         <td class="mono">${totalTime}</td>
         <td class="actions" onclick="event.stopPropagation()">
           <button class="btn btn-round btn-sm" onclick="openTaskModal('${esc(t.id)}')" aria-label="Edit task"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
@@ -1044,6 +1321,16 @@ function renderTableView(tasks) {
     `;
   }).join('');
 }
+
+// Self-check for the matcher; runs once, logs only on failure
+(() => {
+  const t = { title: 'Fix the dashboard chart', description: 'Labels overlap', creator: 'AI:opencode' };
+  const cases = [['dashboard', true], ['dshbrd', true], ['dashbaord', true], ['dasboard', true], ['chart labels', true],
+    ['opencode', true], ['opnecode', true], ['zebra', false], ['dashboard zebra', false], ['xyz', false]];
+  const bad = cases.filter(([q, want]) => (searchScore(q, t) > 0) !== want);
+  if (bad.length) console.error('searchScore self-check failed:', bad);
+})();
+
 
 // Drag a card onto another column to change its status
 function setupDragAndDrop() {
@@ -1244,7 +1531,8 @@ function buildReport(mode, dateStr) {
       due_date: t.due_date || null,
       is_overdue: isOverdue(t),
       subtasks: { done: subtasks.filter(s => s.done).length, total: subtasks.length, items: subtasks.map(s => ({ text: s.content, done: s.done })) },
-      evidence: { required: t.evidence_type || 'none', details: t.evidence_note || '', attached: (t.attachments || []).map(a => a.filename), missing: Boolean(missingEvidence(t)) },
+      evidence: { required: t.evidence_type || 'none', details: t.evidence_note || '', attached: evidenceOf(t).map(a => a.filename), missing: Boolean(missingEvidence(t)) },
+      references: referencesOf(t).map(a => ({ file: a.filename, note: a.note || '' })),
       comments: (t.comments || []).map(c => ({ kind: c.kind, text: c.text, by: isAgentActor(c.author) ? agentName(c.author) : 'person', when: localIso(new Date(c.at)) })),
       activity: logs.slice().reverse().map(l => ({
         when: localIso(new Date(l.timestamp)), actor: isAgentLog(l) ? agentName(l.actor) : (l.actor || 'USER'), actor_type: actorType(l), action: l.action, summary: getLogUpdateText(l)
@@ -1288,7 +1576,8 @@ function buildReport(mode, dateStr) {
     needs_attention: {
       waiting_for_review: titles(t => t.status_now === 'Needs review'),
       overdue: titles(t => t.is_overdue),
-      still_in_progress: titles(t => t.status_now === 'In progress')
+      still_in_progress: titles(t => t.status_now === 'In progress'),
+      deletion_requested: state.tasks.filter(t => t.delete_request).map(t => `${t.title} (${t.delete_request.reason})`)
     },
     board_now: { ...snapshot, total: state.tasks.length },
     tasks,
@@ -1320,7 +1609,8 @@ function buildReport(mode, dateStr) {
     is_overdue: 'true when the due date has passed and the task is not completed.',
     completed_on: 'The date (YYYY-MM-DD) the task was completed inside this period, or null.',
     evidence: 'Proof the task needs before review ("screenshot", "attachment" or "none"), the files attached, and whether it is still missing.',
-    comments: 'Notes on the task. kind "sent_back" is a reviewer explaining why the task went back.',
+    comments: 'Notes on the task. kind "sent_back" is a reviewer explaining why the task went back; "delete_request" is an agent asking to delete it; "delete_rejected" is a person keeping it.',
+    references: 'Files given to work from (mockups, screenshots of the bug). Not proof of work.',
     board_now: 'How many tasks are in each column right now, across all time.'
   };
   return report;

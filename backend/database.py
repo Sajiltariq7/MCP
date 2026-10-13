@@ -64,7 +64,11 @@ def init_db():
 
     # Columns added later: what evidence a task needs, and comments (e.g. why it was sent back)
     existing = {row["name"] for row in cursor.execute("PRAGMA table_info(tasks)")}
-    for col, decl in {"evidence_type": "TEXT DEFAULT 'none'", "evidence_note": "TEXT DEFAULT ''", "comments": "TEXT DEFAULT '[]'"}.items():
+    # deleted_*: deleting keeps the task (shown on the board's Deleted tab); other queries skip it
+    for col, decl in {"evidence_type": "TEXT DEFAULT 'none'", "evidence_note": "TEXT DEFAULT ''", "comments": "TEXT DEFAULT '[]'",
+                      "deleted_at": "TEXT", "deleted_by": "TEXT", "delete_reason": "TEXT",
+                      # an agent's request to delete an In Progress task, waiting for a person: {by, reason, at} JSON
+                      "delete_request": "TEXT"}.items():
         if col not in existing:
             cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {decl}")
 
@@ -82,6 +86,10 @@ def init_db():
             uploaded_at TEXT
         )
     """)
+
+    # kind: "evidence" (proof of the work, added while In Progress) or "reference" (material to work from)
+    if "kind" not in {row["name"] for row in cursor.execute("PRAGMA table_info(attachments)")}:
+        cursor.execute("ALTER TABLE attachments ADD COLUMN kind TEXT DEFAULT 'evidence'")
 
     # Key/value settings (holds the MCP API key)
     cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")

@@ -110,6 +110,15 @@ async def main():
                 assert requests.get(f"{API}/audit", timeout=3).json()[0]["actor"] == "AI:gate-check"
                 logger.success("activity log and task creator use the agent's name (AI:gate-check)")
 
+                # Pending: evidence refused; a reference file is fine, and the agent can look at it
+                assert "Refused" in await call(session, "attach_evidence", task_id=task_id, content_base64=PNG, filename="early.png")
+                text = await call(session, "attach_reference", task_id=task_id, content_base64=PNG, filename="mockup.png", note="match this")
+                assert "Attached reference mockup.png" in text, text
+                ref_id = text.split("id ")[1].split(")")[0]
+                seen = await session.call_tool("read_attachment", {"attachment_id": ref_id})
+                assert seen.content[0].type == "image" and seen.content[0].mimeType == "image/png", seen.content
+                logger.success("Pending: evidence refused; attach_reference works and read_attachment returns the image")
+
                 # Task order: no skipping, notes required for review, Completed only via approve_task
                 assert "Can't move" in await call(session, "update_task_status", task_id=task_id, status="Needs Review")
                 assert "approve_task" in await call(session, "update_task_status", task_id=task_id, status="Completed")
@@ -117,7 +126,7 @@ async def main():
                 assert "needs your results" in await call(session, "update_task_status", task_id=task_id, status="Needs Review")
                 text = await call(session, "update_task_status", task_id=task_id, status="Needs Review", description="All checks passed.")
                 assert "needs a screenshot" in text, text  # add_task defaults to evidence: screenshot
-                assert "Attached shot.png (image/png" in await call(session, "attach_evidence", task_id=task_id, content_base64=PNG, filename="shot.png", note="result")
+                assert "Attached evidence shot.png (image/png" in await call(session, "attach_evidence", task_id=task_id, content_base64=PNG, filename="shot.png", note="result")
                 assert "moved from In Progress to Needs Review" in await call(
                     session, "update_task_status", task_id=task_id, status="Needs Review", description="All checks passed.")
                 logger.success("task order enforced; review needs a screenshot, attached with attach_evidence")
@@ -132,9 +141,30 @@ async def main():
                 assert "approved" in await call(session, "approve_task", task_id=task_id)
                 assert requests.get(f"{API}/tasks/{task_id}", timeout=3).json()["status"] == "Completed"
                 logger.success("sent-back comment reaches the agent; resubmit and approve_task complete it")
+
+                # Deleting: always with a reason; Pending yes, In Progress only by request, later statuses never
+                assert "without a reason" in await call(session, "delete_task", task_id=task_id)
+                assert "Refused: agents can't delete tasks in Completed" in await call(session, "delete_task", task_id=task_id, reason="done")
+                extra = []
+                for title in ("gate-check pending", "gate-check working"):
+                    t = await call(session, "add_task", title=title, evidence="none")
+                    extra.append(t.split("(id ")[1].split(",")[0])
+                await call(session, "update_task_status", task_id=extra[1], status="In Progress")
+                assert "deleted (it was Pending)" in await call(session, "delete_task", task_id=extra[0], reason="Created by mistake")
+                gone = next(t for t in requests.get(f"{API}/tasks/deleted", timeout=3).json() if t["id"] == extra[0])
+                assert gone["deleted_by"] == "AI:gate-check" and gone["delete_reason"] == "Created by mistake", gone
+                assert "deletion request was sent" in await call(session, "delete_task", task_id=extra[1], reason="Duplicate")
+                waiting = requests.get(f"{API}/tasks/{extra[1]}", timeout=3).json()
+                assert waiting["status"] == "In Progress" and waiting["delete_request"]["reason"] == "Duplicate", waiting
+                assert "already has a deletion request" in await call(session, "delete_task", task_id=extra[1], reason="Again")
+                for t in extra:  # tidy up: remove for good
+                    requests.delete(f"{API}/tasks/{t}", params={"actor": "gate-check"}, timeout=3)
+                    requests.delete(f"{API}/tasks/deleted/{t}", timeout=3)
+                logger.success("delete_task: reason required; Pending deleted, In Progress becomes a request, Completed refused")
     finally:
-        if task_id:
+        if task_id:  # delete, then remove for good so the test task doesn't sit in the board's Deleted tab
             requests.delete(f"{API}/tasks/{task_id}", params={"actor": "gate-check"}, timeout=3)
+            requests.delete(f"{API}/tasks/deleted/{task_id}", params={"actor": "gate-check"}, timeout=3)
 
     # Disconnect button: needs the key, ends the session on both transports
     assert requests.post(f"{MCP}/agents/x/disconnect", timeout=3).status_code == 401

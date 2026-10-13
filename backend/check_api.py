@@ -1,4 +1,4 @@
-"""Checks for the task API: partial updates, UTC timestamps, lifecycle rules, comments, evidence, restore.
+"""Checks for the task API: partial updates, UTC timestamps, lifecycle rules, comments, evidence, references, restore.
 
 Runs the API in-process against a temporary copy of data/tasks.db, so it needs no running server
 and never touches real data. Run: task check-api
@@ -46,6 +46,14 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         assert task["status"] == "Pending" and task["evidence_type"] == "screenshot", task
         logger.success("new tasks always start in Pending")
 
+        # Pending: references yes (material to work from), evidence no (that comes while In Progress)
+        r = api.post("/api/tasks/chk1/attachments", json={"filename": "proof.png", "content_base64": PNG})
+        assert r.status_code == 409 and "In Progress" in r.json()["detail"], r.text
+        ref = api.post("/api/tasks/chk1/attachments", json={"filename": "mockup.png", "content_base64": PNG, "kind": "reference", "note": "match this"}).json()
+        assert ref["kind"] == "reference", ref
+        assert api.post("/api/tasks/chk1/attachments", json={"filename": "x.png", "content_base64": PNG, "kind": "bogus"}).status_code == 422
+        logger.success("Pending: evidence refused, reference files accepted")
+
         # Two editors, different fields: both survive
         api.patch("/api/tasks/chk1", json={"description": "agent results", "actor": "AI:checker"}).raise_for_status()
         r = api.patch("/api/tasks/chk1", json={"status": "Needs Review"})
@@ -59,18 +67,18 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
 
         # Evidence: no review without a screenshot
         r = api.patch("/api/tasks/chk1", json={"status": "Needs Review"})
-        assert r.status_code == 409 and "screenshot" in r.json()["detail"], r.text
+        assert r.status_code == 409 and "screenshot" in r.json()["detail"], r.text  # the reference image doesn't count
         assert api.post("/api/tasks/chk1/attachments", json={"filename": "notes.txt", "content_base64": base64.b64encode(b"hi").decode()}).status_code == 200
         assert api.patch("/api/tasks/chk1", json={"status": "Needs Review"}).status_code == 409, "a text file is not a screenshot"
         att = api.post("/api/tasks/chk1/attachments", json={"filename": "shot.png", "content_base64": PNG, "note": "after", "actor": "AI:checker"}).json()
         assert att["content_type"] == "image/png" and att["size"] > 0, att
         img = api.get(att["url"])
         assert img.status_code == 200 and img.content == base64.b64decode(PNG) and img.headers["content-disposition"].startswith("inline")
-        txt = api.get(api.get("/api/tasks/chk1").json()["attachments"][0]["url"])
+        txt = api.get(next(a for a in api.get("/api/tasks/chk1").json()["attachments"] if a["filename"] == "notes.txt")["url"])
         assert txt.headers["content-disposition"].startswith("attachment") and txt.headers["content-security-policy"] == "sandbox"
         assert api.post("/api/tasks/chk1/attachments", json={"filename": "x.png", "content_base64": "not base64!"}).status_code == 400
         task = api.patch("/api/tasks/chk1", json={"status": "Needs Review"}).json()
-        assert task["completed_at"] and task["duration_ms"] is not None and len(task["attachments"]) == 2, task
+        assert task["completed_at"] and task["duration_ms"] is not None and [a["kind"] for a in task["attachments"]].count("evidence") == 2, task
         logger.success("review needs the evidence (a screenshot here); images show inline, other files download sandboxed")
 
         # Going back from review needs a comment, which is kept on the task
@@ -97,13 +105,44 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         assert api.patch("/api/tasks/chk1", json={"evidence_type": "attachment", "evidence_note": ""}).status_code == 422
         logger.success("approve completes; Completed -> Needs Review needs a reason; 'attachment' evidence must say what is needed")
 
+        # Deletion requests (what an agent files for an In Progress task): need a reason, one at a time, a person decides
+        api.post("/api/tasks", json={"id": "chk2", "title": "Requested"}).raise_for_status()
+        assert api.post("/api/tasks/chk2/delete-request", json={"reason": " ", "actor": "AI:x"}).status_code == 422
+        api.post("/api/tasks/chk2/delete-request", json={"reason": "Duplicate of chk1", "actor": "AI:x"}).raise_for_status()
+        assert api.post("/api/tasks/chk2/delete-request", json={"reason": "again", "actor": "AI:x"}).status_code == 409
+        req = api.get("/api/tasks/chk2").json()
+        assert req["delete_request"]["by"] == "AI:x" and req["comments"][-1]["kind"] == "delete_request", req
+        assert api.delete("/api/tasks/chk2/delete-request", params={"reason": ""}).status_code == 422
+        api.delete("/api/tasks/chk2/delete-request", params={"reason": "Still needed for the demo"}).raise_for_status()
+        kept = api.get("/api/tasks/chk2").json()
+        assert kept["delete_request"] is None and kept["comments"][-1] == {**kept["comments"][-1], "kind": "delete_rejected", "text": "Still needed for the demo"}, kept
+        api.delete("/api/tasks/chk2").raise_for_status(); api.delete("/api/tasks/deleted/chk2").raise_for_status()
+        logger.success("deletion requests need a reason; a person can reject them with one (kept in comments)")
+
+        # Deleting keeps the task (hidden, with who/when/why) for the Deleted tab
         snapshot = api.get("/api/tasks/chk1").json()
+        api.delete("/api/tasks/chk1", params={"actor": "USER", "reason": "Duplicate of another task"}).raise_for_status()
+        assert api.get("/api/tasks/chk1").status_code == 404 and all(t["id"] != "chk1" for t in api.get("/api/tasks").json())
+        assert api.patch("/api/tasks/chk1", json={"title": "x"}).status_code == 404
+        gone = next(t for t in api.get("/api/tasks/deleted").json() if t["id"] == "chk1")
+        assert gone["delete_reason"] == "Duplicate of another task" and gone["deleted_by"] == "USER" and gone["deleted_at"].endswith("+00:00"), gone
+        assert gone["comments"] == snapshot["comments"] and len(gone["attachments"]) == 3, gone
+        assert "deleted: Duplicate of another task" in api.get("/api/audit").json()[0]["updateSummary"]
+        api.post("/api/tasks/chk1/restore").raise_for_status()
+        restored = api.get("/api/tasks/chk1").json()
+        assert restored["started_at"] == snapshot["started_at"] and restored["status"] == "Completed" and not restored["deleted_at"], restored
+        assert restored["comments"] == snapshot["comments"] and len(restored["attachments"]) == 3, restored
+        assert api.get("/api/audit").json()[0]["action"] == "RESTORE_TASK"
+        # Undo on the board still uses POST ?restore=true
         api.delete("/api/tasks/chk1").raise_for_status()
         api.post("/api/tasks?restore=true", json={**snapshot, "actor": "USER"}).raise_for_status()
-        restored = api.get("/api/tasks/chk1").json()
-        assert restored["started_at"] == snapshot["started_at"] and restored["status"] == "Completed", restored
-        assert restored["comments"] == snapshot["comments"] and len(restored["attachments"]) == 2, restored
-        assert api.get("/api/audit").json()[0]["action"] == "RESTORE_TASK"
-        logger.success("delete + restore keeps the task's history, comments and evidence")
+        assert api.get("/api/tasks/chk1").json()["status"] == "Completed"
+        # Delete forever: only for deleted tasks; removes the row and the files
+        assert api.delete("/api/tasks/deleted/chk1").status_code == 404  # still live
+        api.delete("/api/tasks/chk1").raise_for_status()
+        api.delete("/api/tasks/deleted/chk1").raise_for_status()
+        assert all(t["id"] != "chk1" for t in api.get("/api/tasks/deleted").json())
+        assert not any(database.ATTACH_DIR.glob("*")), list(database.ATTACH_DIR.glob("*"))
+        logger.success("delete keeps the task for the Deleted tab (who, when, why); restore brings it back; delete forever removes it and its files")
 
 print("all API checks passed")

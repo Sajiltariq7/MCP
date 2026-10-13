@@ -41,6 +41,9 @@ ALLOWED_MOVES = {
 NEXT_STEP_HINT = {"Pending": "Move it to In Progress first.", "In Progress": "Move it to Needs Review first; approval completes it."}
 
 EVIDENCE_TYPES = {"none", "screenshot", "attachment"}
+# "reference": material to work from (any time, e.g. a mockup when the task is created).
+# "evidence": proof of the finished work, attached while the task is In Progress.
+ATTACHMENT_KINDS = {"reference", "evidence"}
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 # Shown in the browser; every other type downloads (an HTML or SVG file could otherwise run on this origin)
 INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
@@ -86,7 +89,8 @@ def missing_evidence(cursor, task):
     kind, note = task["evidence_type"] or "none", (task["evidence_note"] or "").strip()
     if kind == "none":
         return None
-    types = [r["content_type"] or "" for r in cursor.execute("SELECT content_type FROM attachments WHERE task_id = ?", (task["id"],))]
+    types = [r["content_type"] or "" for r in cursor.execute(
+        "SELECT content_type FROM attachments WHERE task_id = ? AND kind = 'evidence'", (task["id"],))]
     if kind == "screenshot" and not any(t.startswith("image/") for t in types):
         return f"This task needs a screenshot before review{': ' + note if note else ''}. Attach one first."
     if kind == "attachment" and not types:
@@ -94,20 +98,22 @@ def missing_evidence(cursor, task):
     return None
 
 def attachment_out(row):
-    return {k: row[k] for k in ("id", "filename", "content_type", "size", "note", "uploaded_by", "uploaded_at")} | {"url": f"/api/attachments/{row['id']}"}
+    return {k: row[k] for k in ("id", "kind", "filename", "content_type", "size", "note", "uploaded_by", "uploaded_at")} | {"url": f"/api/attachments/{row['id']}"}
 
 def row_to_task(row, attachments=()):
     task = dict(row)
     task["subtasks"] = json.loads(task["subtasks"]) if task["subtasks"] else []
     task["comments"] = json.loads(task["comments"]) if task.get("comments") else []
+    task["delete_request"] = json.loads(task["delete_request"]) if task.get("delete_request") else None
     task["evidence_type"] = task.get("evidence_type") or "none"
     task["evidence_note"] = task.get("evidence_note") or ""
     task["status"] = normalize_status(task["status"])
     task["attachments"] = [attachment_out(a) for a in attachments]
     return task
 
-def fetch_task(cursor, task_id):
-    row = cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+def fetch_task(cursor, task_id, deleted=False):
+    """A live task (or, with deleted=True, a deleted one). 404 otherwise."""
+    row = cursor.execute(f"SELECT * FROM tasks WHERE id = ? AND deleted_at IS {'NOT ' if deleted else ''}NULL", (task_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Task not found")
     return row
@@ -154,21 +160,112 @@ class TaskPatch(BaseModel):
     comment: Optional[str] = None  # added to the task's comments; required when moving back from review
     actor: Optional[str] = "USER"
 
+class DeleteRequestIn(BaseModel):
+    reason: str
+    actor: Optional[str] = "USER"
+
 class AttachmentIn(BaseModel):
     filename: str
     content_base64: str
+    kind: Optional[str] = "evidence"  # "evidence" (proof, while In Progress) or "reference" (material to work from)
     note: Optional[str] = ""
     actor: Optional[str] = "USER"
 
 @app.get("/api/tasks")
 def get_tasks():
     conn = get_db_connection()
-    rows = conn.execute("SELECT * FROM tasks ORDER BY created_at").fetchall()
+    rows = conn.execute("SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY created_at").fetchall()
     files = {}
     for a in conn.execute("SELECT * FROM attachments ORDER BY uploaded_at").fetchall():
         files.setdefault(a["task_id"], []).append(a)
     conn.close()
     return [row_to_task(row, files.get(row["id"], [])) for row in rows]
+
+# Before /api/tasks/{task_id}, so "deleted" isn't read as a task id
+@app.get("/api/tasks/deleted")
+def get_deleted_tasks():
+    """Deleted tasks, newest deletion first, with everything they had (for the board's Deleted tab)."""
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM tasks WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").fetchall()
+    tasks = [row_to_task(row, task_attachments(conn.cursor(), row["id"])) for row in rows]
+    conn.close()
+    return tasks
+
+@app.post("/api/tasks/{task_id}/restore")
+def restore_task(task_id: str, actor: str = "USER"):
+    """Bring a deleted task back exactly as it was."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        title = fetch_task(cursor, task_id, deleted=True)["title"]
+        cursor.execute("UPDATE tasks SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL WHERE id = ?", (task_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity(actor, "RESTORE_TASK", "TASK", task_id, f"Task '{title}' restored")
+    return {"message": "Task restored", "id": task_id}
+
+@app.delete("/api/tasks/deleted/{task_id}")
+def purge_task(task_id: str, actor: str = "USER"):
+    """Remove a deleted task for good, with its attachment files. Cannot be undone."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        title = fetch_task(cursor, task_id, deleted=True)["title"]
+        for row in task_attachments(cursor, task_id):
+            (ATTACH_DIR / row["path"]).unlink(missing_ok=True)
+        cursor.execute("DELETE FROM attachments WHERE task_id = ?", (task_id,))
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity(actor, "PURGE_TASK", "TASK", task_id, f"Task '{title}' deleted for good")
+    return {"message": "Task deleted for good"}
+
+def add_comment(cursor, task, comment):
+    comments = json.loads(task["comments"] or "[]")
+    comments.append({**comment, "at": now_utc()})
+    cursor.execute("UPDATE tasks SET comments = ? WHERE id = ?", (json.dumps(comments), task["id"]))
+
+@app.post("/api/tasks/{task_id}/delete-request")
+def request_delete(task_id: str, body: DeleteRequestIn):
+    """Ask a person to delete this task (agents can't delete In Progress tasks themselves). Needs a reason."""
+    reason, actor = body.reason.strip(), body.actor or "USER"
+    if not reason:
+        raise HTTPException(422, "A deletion request needs a reason.")
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        task = fetch_task(cursor, task_id)
+        if task["delete_request"]:
+            raise HTTPException(409, "This task already has a deletion request waiting for a person.")
+        cursor.execute("UPDATE tasks SET delete_request = ? WHERE id = ?",
+                       (json.dumps({"by": actor, "reason": reason, "at": now_utc()}), task_id))
+        add_comment(cursor, task, {"author": actor, "text": reason, "kind": "delete_request"})
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity(actor, "DELETE_REQUEST", "TASK", task_id, f"Deletion of '{task['title']}' requested: {reason}")
+    return {"message": "Deletion requested; a person must approve it"}
+
+@app.delete("/api/tasks/{task_id}/delete-request")
+def reject_delete_request(task_id: str, reason: str, actor: str = "USER"):
+    """Keep the task: clear the deletion request, saying why (the agent reads it in the comments)."""
+    if not reason.strip():
+        raise HTTPException(422, "Say why the task is kept.")
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        task = fetch_task(cursor, task_id)
+        if not task["delete_request"]:
+            raise HTTPException(404, "This task has no deletion request.")
+        cursor.execute("UPDATE tasks SET delete_request = NULL WHERE id = ?", (task_id,))
+        add_comment(cursor, task, {"author": actor, "text": reason.strip(), "kind": "delete_rejected"})
+        conn.commit()
+    finally:
+        conn.close()
+    log_activity(actor, "DELETE_REJECTED", "TASK", task_id, f"Kept '{task['title']}': {reason.strip()}")
+    return {"message": "Deletion request rejected; the task stays"}
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: str):
@@ -191,7 +288,14 @@ def save_or_update_task(task: TaskModel, restore: bool = False):
         subtasks_json = json.dumps(task.subtasks) if task.subtasks else "[]"
 
         existing = cursor.execute("SELECT * FROM tasks WHERE id = ?", (task.id,)).fetchone()
-        if existing:
+        if existing and existing["deleted_at"]:
+            if not restore:
+                raise HTTPException(409, "A deleted task has this id. Restore it instead.")
+            # Undo of a delete: bring the task back as it was
+            cursor.execute("UPDATE tasks SET deleted_at = NULL, deleted_by = NULL, delete_reason = NULL WHERE id = ?", (task.id,))
+            conn.commit()
+            action, details = "RESTORE_TASK", f"Task '{existing['title']}' restored"
+        elif existing:
             check_move(cursor, existing, task.status, None)
             started_at, completed_at, duration_ms = status_timestamps(existing, task.status, now_iso)
             cursor.execute("""
@@ -274,7 +378,10 @@ def patch_task(task_id: str, patch: TaskPatch):
 
 @app.post("/api/tasks/{task_id}/attachments")
 def add_attachment(task_id: str, upload: AttachmentIn):
-    """Attach evidence (a screenshot or any file, sent as base64). Max 10 MB."""
+    """Attach a file, sent as base64 (max 10 MB): a reference to work from, or evidence of the finished work."""
+    kind = (upload.kind or "evidence").strip().lower()
+    if kind not in ATTACHMENT_KINDS:
+        raise HTTPException(422, "kind must be 'reference' or 'evidence'")
     try:
         data = base64.b64decode(upload.content_base64, validate=True)
     except (binascii.Error, ValueError):
@@ -293,18 +400,22 @@ def add_attachment(task_id: str, upload: AttachmentIn):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        title = fetch_task(cursor, task_id)["title"]
+        task = fetch_task(cursor, task_id)
+        title, status = task["title"], normalize_status(task["status"])
+        if kind == "evidence" and status != "In Progress":
+            raise HTTPException(409, f"Evidence can only be attached while the task is In Progress (it is {status}). "
+                                     "To share material to work from, attach it as a reference instead.")
         path.write_bytes(data)
         cursor.execute("""
-            INSERT INTO attachments (id, task_id, filename, content_type, size, path, note, uploaded_by, uploaded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (att_id, task_id, filename, content_type, len(data), path.name, upload.note or "", upload.actor or "USER", now_utc()))
+            INSERT INTO attachments (id, task_id, filename, content_type, size, path, note, uploaded_by, uploaded_at, kind)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (att_id, task_id, filename, content_type, len(data), path.name, upload.note or "", upload.actor or "USER", now_utc(), kind))
         conn.commit()
         row = cursor.execute("SELECT * FROM attachments WHERE id = ?", (att_id,)).fetchone()
     finally:
         conn.close()
 
-    log_activity(upload.actor or "USER", "ATTACH_EVIDENCE", "TASK", task_id, f"Evidence '{filename}' attached to '{title}'")
+    log_activity(upload.actor or "USER", f"ATTACH_{kind.upper()}", "TASK", task_id, f"{kind.capitalize()} '{filename}' attached to '{title}'")
     return attachment_out(row)
 
 @app.get("/api/attachments/{att_id}")
@@ -320,18 +431,20 @@ def get_attachment(att_id: str):
                         headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
 
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: str, actor: str = "USER"):
+def delete_task(task_id: str, actor: str = "USER", reason: str = ""):
+    """Delete a task: it is kept, hidden, with who deleted it, when and why (the board asks why for tasks in
+    Needs Review or Completed). Restore it with POST /api/tasks/{id}/restore."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         task_title = fetch_task(cursor, task_id)["title"]
-        # Attachments stay, so Undo (restore) brings the task back with its evidence
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("UPDATE tasks SET deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ?",
+                       (now_utc(), actor, reason.strip(), task_id))
         conn.commit()
     finally:
         conn.close()
 
-    log_activity(actor, "DELETE_TASK", "TASK", task_id, f"Task '{task_title}' deleted")
+    log_activity(actor, "DELETE_TASK", "TASK", task_id, f"Task '{task_title}' deleted" + (f": {reason.strip()}" if reason.strip() else ""))
     return {"message": "Task deleted"}
 
 @app.get("/api/audit")

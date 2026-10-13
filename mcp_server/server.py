@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 
 from loguru import logger
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, Image
 import requests
 
 # ----------------------------------------------------
@@ -126,6 +126,8 @@ def add_task(ctx: Context, title: str, description: str = "", priority: str = "m
       "attachment" - any file; say which in evidence_details (required),
       "none" - no proof needed.
     evidence_details: what the evidence should show, e.g. "the login page after the fix".
+    To give whoever does the task material to work from (a mockup, a screenshot of the bug), call
+    attach_reference with the new task's id. Evidence itself is attached later, while In Progress.
     """
     actor = agent_actor(ctx)
     evidence = (evidence or "screenshot").strip().lower()
@@ -165,7 +167,11 @@ def get_tasks() -> str:
       comments - notes from people; kind "sent_back" says why a reviewer sent the task back. Read these first
                  when a task you worked on is In Progress or Pending again.
       evidence_type / evidence_note - proof needed before Needs Review (screenshot, attachment or none).
-      attachments - evidence already attached (filename, content_type, uploaded_by).
+      delete_request - set when an agent asked to delete this In Progress task and a person hasn't decided yet.
+      attachments - files on the task, each with an id and a kind:
+                    "reference" - material to work from (mockups, bug screenshots). Open them with read_attachment
+                                  before you start the task.
+                    "evidence"  - proof of finished work, attached with attach_evidence while In Progress.
     """
     logger.info("Fetching tasks list from backend...")
     try:
@@ -180,7 +186,8 @@ def update_task_status(ctx: Context, task_id: str, status: str, description: str
     """Move a task one step forward: Pending -> In Progress -> Needs Review.
 
     Moving to Needs Review requires `description` with your results (or subtasks already on the task),
-    and the evidence the task asks for (see evidence_type; attach it with attach_evidence first).
+    and the evidence the task asks for (see evidence_type; attach it with attach_evidence while In Progress).
+    Starting a task (Pending -> In Progress)? Read its reference attachments first with read_attachment.
     To finish a task in Needs Review, call approve_task instead.
     """
     actor = agent_actor(ctx)
@@ -213,15 +220,8 @@ def update_task_status(ctx: Context, task_id: str, status: str, description: str
         return api_error(task_id, e)
 
 
-@mcp.tool()
-def attach_evidence(ctx: Context, task_id: str, file_path: str = "", content_base64: str = "",
-                    filename: str = "", note: str = "") -> str:
-    """Attach a screenshot or other file as evidence of your work (max 10 MB).
-
-    Give file_path (a file on this machine, e.g. a screenshot you saved), or content_base64 plus filename.
-    Tasks whose evidence_type is "screenshot" need an image (png, jpg, gif, webp) before Needs Review;
-    "attachment" accepts any file. note: what the file shows.
-    """
+def _attach(ctx: Context, task_id: str, kind: str, file_path: str, content_base64: str, filename: str, note: str) -> str:
+    """Upload a file to the task as `kind` ("reference" or "evidence")."""
     actor = agent_actor(ctx)
     if file_path:
         path = Path(file_path).expanduser()
@@ -235,12 +235,63 @@ def attach_evidence(ctx: Context, task_id: str, file_path: str = "", content_bas
         return "Give file_path, or content_base64 together with filename."
     try:
         att = api("POST", f"/tasks/{task_id}/attachments",
-                  json={"filename": filename, "content_base64": content_base64, "note": note, "actor": actor})
-        logger.success(f"{actor} attached '{att['filename']}' to Task #{task_id}.")
-        return f"Attached {att['filename']} ({att['content_type']}, {att['size']} bytes) to task {task_id}."
+                  json={"filename": filename, "content_base64": content_base64, "kind": kind, "note": note, "actor": actor})
+        logger.success(f"{actor} attached {kind} '{att['filename']}' to Task #{task_id}.")
+        return f"Attached {kind} {att['filename']} ({att['content_type']}, {att['size']} bytes, id {att['id']}) to task {task_id}."
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to attach evidence to Task #{task_id}: {e}")
+        logger.error(f"Failed to attach {kind} to Task #{task_id}: {e}")
         return api_error(task_id, e)
+
+
+@mcp.tool()
+def attach_evidence(ctx: Context, task_id: str, file_path: str = "", content_base64: str = "",
+                    filename: str = "", note: str = "") -> str:
+    """Attach EVIDENCE: proof of the work you did, e.g. a screenshot of the finished result (max 10 MB).
+
+    Only while the task is In Progress (refused in Pending, Needs Review and Completed).
+    Give file_path (a file on this machine, e.g. a screenshot you saved), or content_base64 plus filename.
+    Tasks whose evidence_type is "screenshot" need an image (png, jpg, gif, webp) before Needs Review;
+    "attachment" accepts any file. note: what the file shows.
+    Not for material to work from: use attach_reference for that.
+    """
+    return _attach(ctx, task_id, "evidence", file_path, content_base64, filename, note)
+
+
+@mcp.tool()
+def attach_reference(ctx: Context, task_id: str, file_path: str = "", content_base64: str = "",
+                     filename: str = "", note: str = "") -> str:
+    """Attach a REFERENCE file: material whoever does the task should look at, e.g. a mockup, a screenshot of
+    the bug, a design or a sample file (max 10 MB). Allowed at any time, usually right after add_task.
+
+    Give file_path (a file on this machine), or content_base64 plus filename.
+    note: what it is and how to use it, e.g. "make the page look like this".
+    References are not evidence: they never count toward moving a task to Needs Review.
+    """
+    return _attach(ctx, task_id, "reference", file_path, content_base64, filename, note)
+
+
+@mcp.tool()
+def read_attachment(attachment_id: str):
+    """Open a task's attachment (reference or evidence) by its id, from the task's `attachments` in get_tasks.
+
+    Images come back as an image you can look at; text files (txt, md, csv, json, ...) as text.
+    Before starting a task, read its reference files: they show what to build or fix.
+    """
+    try:
+        response = requests.get(f"{BASE_URL}/attachments/{attachment_id}", timeout=10)
+        if response.status_code == 404:
+            return f"No attachment with id {attachment_id}."
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        return f"Task API error: {e}"
+    content_type = response.headers.get("content-type", "").split(";")[0].strip()
+    if content_type in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+        return Image(data=response.content, format=content_type.split("/")[1])
+    if content_type.startswith("text/") or content_type in ("application/json", "application/xml", "application/csv"):
+        text = response.content.decode("utf-8", errors="replace")
+        return text if len(text) <= 50_000 else text[:50_000] + "\n... (cut at 50,000 characters)"
+    return (f"Attachment {attachment_id} is {content_type or 'a binary file'} ({len(response.content)} bytes) and can't be "
+            f"shown here. It is downloadable at {BASE_URL}/attachments/{attachment_id}.")
 
 
 @mcp.tool()
@@ -302,14 +353,34 @@ def bulk_approve_tasks(ctx: Context) -> str:
 
 
 @mcp.tool()
-def delete_task(ctx: Context, task_id: str) -> str:
-    """Delete a task."""
+def delete_task(ctx: Context, task_id: str, reason: str = "") -> str:
+    """Delete a task. Agents must always give a reason, and may only:
+
+      Pending      - delete it. It goes to the board's Deleted tab with your reason.
+      In Progress  - REQUEST deletion. The task stays until a person approves or rejects the request on the
+                     board; their answer appears in the task's comments (kind "delete_rejected" if kept).
+      Needs Review / Completed - not allowed. Ask a person instead.
+    """
     actor = agent_actor(ctx)
-    logger.info(f"{actor} deleting Task #{task_id}")
+    reason = (reason or "").strip()
+    if not reason:
+        return "Refused: agents can't delete a task without a reason. Call delete_task again with `reason`."
     try:
-        api("DELETE", f"/tasks/{task_id}", params={"actor": actor})
-        logger.success(f"Task #{task_id} deleted.")
-        return f"Task {task_id} deleted."
+        task = api("GET", f"/tasks/{task_id}")
+        status = task["status"]
+        if status == "Pending":
+            api("DELETE", f"/tasks/{task_id}", params={"actor": actor, "reason": reason})
+            logger.success(f"{actor} deleted Pending Task #{task_id}: {reason}")
+            return f"Task {task_id} deleted (it was Pending). It is on the board's Deleted tab with your reason."
+        if status == "In Progress":
+            if task.get("delete_request"):
+                return f"Task {task_id} already has a deletion request waiting for a person: {task['delete_request']['reason']}"
+            api("POST", f"/tasks/{task_id}/delete-request", json={"reason": reason, "actor": actor})
+            logger.info(f"{actor} requested deletion of In Progress Task #{task_id}: {reason}")
+            return (f"Task {task_id} is In Progress, so it was not deleted. A deletion request was sent; a person "
+                    f"approves or rejects it on the board. Check the task's comments for the answer.")
+        logger.warning(f"{actor} tried to delete Task #{task_id} in {status}: refused")
+        return f"Refused: agents can't delete tasks in {status}. Ask a person to delete it on the board."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to delete Task #{task_id}: {e}")
         return api_error(task_id, e)

@@ -16,12 +16,13 @@
 <header class="bar"><div class="wrap bar-inner">
   <span class="brand"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#tick"/></svg><span class="brand-name">Taskboard</span></span>
   <span class="bar-break" aria-hidden="true"></span>
-  <div class="tabs" id="tabs" role="tablist" aria-label="Views" style="--tabs: 5; --i: 0">
+  <div class="tabs" id="tabs" role="tablist" aria-label="Views" style="--tabs: 6; --i: 0">
     <span class="tabs-pill" aria-hidden="true"></span>
     <button class="tab" role="tab" id="nav-board" aria-selected="true" aria-controls="view-board" onclick="switchTab('board')">Board</button>
     <button class="tab" role="tab" id="nav-list" aria-selected="false" aria-controls="view-list" tabindex="-1" onclick="switchTab('list')">Manager</button>
     <button class="tab" role="tab" id="nav-audit" aria-selected="false" aria-controls="view-audit" tabindex="-1" onclick="switchTab('audit')">Activity</button>
     <button class="tab" role="tab" id="nav-report" aria-selected="false" aria-controls="view-report" tabindex="-1" onclick="switchTab('report')">Report</button>
+    <button class="tab" role="tab" id="nav-deleted" aria-selected="false" aria-controls="view-deleted" tabindex="-1" onclick="switchTab('deleted')">Deleted <span class="count" id="n-deleted" aria-label="deleted tasks">0</span></button>
     <button class="tab" role="tab" id="nav-agents" aria-selected="false" aria-controls="view-agents" tabindex="-1" onclick="switchTab('agents')">Agents <span class="count" id="n-agents" aria-label="connected agents">0</span></button>
   </div>
   <div class="search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
@@ -81,7 +82,14 @@
 
   <!-- VIEW 2: TASK TABLE -->
   <section id="view-list" class="hidden" role="tabpanel" aria-labelledby="nav-list">
-    <div class="section-head"><h1>Task manager</h1><p>Every task in one table. Click a row for details.</p></div>
+    <div class="section-head">
+      <div><h1>Task manager</h1><p>Every task in one table. Click a row for details. Search finds typos and abbreviations too.</p></div>
+      <div class="row manager-filters">
+        <label class="field-title" for="creator-filter">Created by</label>
+        <select id="creator-filter" class="input input-sm" onchange="state.creatorFilter = this.value; renderDashboard()"></select>
+        <span class="chip" id="manager-count" aria-live="polite"></span>
+      </div>
+    </div>
     <div class="paper table-paper"><div class="table-scroll">
       <table>
         <thead><tr><th>Task</th><th>Status</th><th>Creator</th><th>Duration</th><th class="actions">Actions</th></tr></thead>
@@ -127,6 +135,14 @@
       <p class="hint soft">Prompt to use with it: <code>Write the report from this JSON. Follow instructions_for_llm exactly.</code></p>
       <pre class="code report-json" id="report-json"></pre>
     </div>
+  </section>
+
+  <!-- VIEW: DELETED TASKS (kept with everything they had) -->
+  <section id="view-deleted" class="hidden" role="tabpanel" aria-labelledby="nav-deleted">
+    <div class="section-head">
+      <div><h1>Deleted</h1><p>Every deleted task with everything it had, newest first. Restore puts it back where it was.</p></div>
+    </div>
+    <div id="deleted-list" class="deleted-grid"></div>
   </section>
 
   <!-- VIEW 4: AGENTS (MCP connections + API key) -->
@@ -215,6 +231,14 @@
       <input class="input" id="taskEvidenceNote" aria-label="What the evidence should show">
       <span class="hint">Whoever finishes the task, a person or an agent, attaches this before it can go to Needs review.</span>
     </fieldset>
+    <div class="field">
+      <span class="field-title">Reference files <span class="soft">(optional)</span></span>
+      <div class="row">
+        <button type="button" class="btn btn-sm" onclick="document.getElementById('taskRefsInput').click()"><i class="fa-solid fa-image" aria-hidden="true"></i> Add reference files</button>
+        <input type="file" id="taskRefsInput" multiple hidden aria-label="Reference files" onchange="showChosenRefs()">
+        <span class="hint" id="taskRefsChosen">A mockup, a screenshot of the bug, an example: anything that helps do the task.</span>
+      </div>
+    </div>
     <p class="notice notice-care" id="newTaskHint"><i class="fa-solid fa-hourglass-half" aria-hidden="true"></i> New tasks start in Pending. Move them to In progress when work begins.</p>
     <div class="modal-foot">
       <button type="button" class="btn" onclick="closeTaskModal()">Cancel</button>
@@ -232,12 +256,12 @@
     </div>
     <p class="soft" id="reasonText"></p>
     <div class="field">
-      <label for="reasonInput">Why? It is saved on the card, and the agent or person working on it reads it.</label>
-      <textarea class="input" id="reasonInput" rows="3" required placeholder="e.g. The button is still misaligned on mobile."></textarea>
+      <label for="reasonInput" id="reasonLabel">Why?</label>
+      <textarea class="input" id="reasonInput" rows="3" required></textarea>
     </div>
     <div class="modal-foot">
       <button type="button" class="btn" onclick="closeReasonModal()">Cancel</button>
-      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Send back</button>
+      <button type="submit" class="btn btn-primary" id="reasonSubmit">OK</button>
     </div>
   </form>
 </div>

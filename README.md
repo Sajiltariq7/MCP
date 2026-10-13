@@ -120,7 +120,10 @@ Good to know:
 The API enforces the order for everyone, people and agents:
 
 - **Pending** can only go to **In progress**. No jumping straight to review or done.
-- **Needs review** needs the task's **evidence**: a screenshot (the default for new tasks) or the attachment the task asks for. Attach it from the task's detail view, or with the `attach_evidence` MCP tool.
+- **Needs review** needs the task's **evidence**: a screenshot (the default for new tasks) or the attachment the task asks for. Evidence is attached **while the task is In progress**, from its detail view or with the `attach_evidence` MCP tool.
+- **Reference files** are different: material to work from (a mockup, a screenshot of the bug), added any time, including on the New task form. Agents add them with `attach_reference` and look at them with `read_attachment`.
+- **Deleting** a task in Needs review or Completed asks why. Deleted tasks go to the **Deleted** tab.
+- **Agents** must always give a reason to delete, can delete only Pending tasks, and for In progress tasks can only *ask*: the card shows the request with **Approve delete** / **Keep it**.
 - **Sending a task back** from Needs review, or reopening a completed one (back to review or to work), asks **why**. The reason shows on the card as "Sent back: ..." and in the task's comments, and agents read it with `get_tasks`.
 - Agents are stricter still: they only move forward one step, and only `approve_task` / `bulk_approve_tasks` complete a task.
 
@@ -131,8 +134,9 @@ The header has five tabs, a search box (filters the Board and Manager), and **Ne
 | Tab | What it's for |
 | --- | --- |
 | **Board** | Kanban columns. Drag a card to change its status (on a phone: hold it, then drag). Each card has **Edit** and **Delete** buttons; click the card for details, subtasks and that task's full history. Each column lists oldest first, 20 cards per page: **Prev** / **Next** beside the heading, and each column shows its range (e.g. `21–40 of 45`). Refreshes itself every 5 seconds. |
-| **Manager** | All tasks in one table with status, creator and duration. |
+| **Manager** | All tasks in one table with status, creator and duration. Filter by creator; the search box forgives typos and abbreviations. |
 | **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**, and on Agent pick one agent by name. |
+| **Deleted** | Every deleted task with all its information and why it was deleted. **Restore** it, or **Delete forever**. |
 | **Report** | Builds a JSON summary of a day or a week for an AI to write up (below). |
 | **Agents** | Is the MCP server running, which agents are connected (with a **Disconnect** button each), the API key, and every tool agents can call with its parameters (read live from the MCP server). |
 
@@ -171,12 +175,14 @@ What a connected agent can call ([details](docs/mcp-tools.md)):
 | --- | --- |
 | `get_tasks` | List every task. Agents call this before changing anything. |
 | `add_task(title, description, priority, evidence, evidence_details)` | Create a Pending task; `evidence` is `screenshot` (default), `attachment` (say which) or `none` |
-| `attach_evidence(task_id, file_path or content_base64 + filename, note)` | Attach a screenshot or file as evidence (10 MB max) |
+| `attach_evidence(task_id, file_path or content_base64 + filename, note)` | Attach proof of the finished work, while In progress (10 MB max) |
+| `attach_reference(task_id, file_path or content_base64 + filename, note)` | Attach material to work from, e.g. a mockup (any status) |
+| `read_attachment(attachment_id)` | Open an attachment: images come back as images the model can see |
 | `update_task_status(task_id, status, description)` | Move a task one step forward (refuses skipped steps; review needs results) |
 | `update_task_details(task_id, description, subtasks)` | Attach results, notes or a subtask checklist |
 | `approve_task(task_id)` | Move one task from Needs review to Completed |
 | `bulk_approve_tasks()` | Approve every task in Needs review; lists any that failed |
-| `delete_task(task_id)` | Delete a task |
+| `delete_task(task_id, reason)` | Reason required. Pending: deleted. In progress: sends a deletion request a person approves or rejects. Needs review / Completed: refused |
 
 ## REST API
 
@@ -190,7 +196,10 @@ Base URL `http://127.0.0.1:8190/api` ([details](docs/task-api.md)). Browsers may
 | `PATCH /tasks/{id}` | Change only the fields you send; `comment` is required to send a task back |
 | `POST /tasks/{id}/attachments` | Attach evidence (`filename`, `content_base64`) |
 | `GET /attachments/{id}` | Download an attached file |
-| `DELETE /tasks/{id}` | Delete a task |
+| `DELETE /tasks/{id}?reason=` | Delete a task (kept for the Deleted tab) |
+| `GET /tasks/deleted` | Deleted tasks |
+| `POST /tasks/{id}/restore` | Restore a deleted task |
+| `DELETE /tasks/deleted/{id}` | Remove a deleted task for good |
 | `GET /audit` | The activity log |
 | `GET /mcp/key` | The current MCP API key |
 | `POST /mcp/key/rotate` | Make a new key; the old one stops working |

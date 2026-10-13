@@ -11,13 +11,15 @@ The server speaks Streamable HTTP at `http://127.0.0.1:8001/mcp` and, for older 
 | Tool | Arguments | Does |
 | --- | --- | --- |
 | `add_task` | `title`, `description`, `priority`, `evidence` (`screenshot` default, `attachment`, `none`), `evidence_details` | Creates a Pending task with an id from the current time in ms, creator `AI:<agent name>`, and the evidence it needs before review |
-| `attach_evidence` | `task_id`, `file_path` or `content_base64` + `filename`, `note` | Attaches a screenshot or other file (max 10 MB) through `POST /api/tasks/{id}/attachments` |
-| `get_tasks` | none | Returns every task as JSON, including `comments` (why a reviewer sent it back), `evidence_type`/`evidence_note`, and `attachments` |
+| `attach_evidence` | `task_id`, `file_path` or `content_base64` + `filename`, `note` | Attaches proof of the finished work (max 10 MB); only while the task is In Progress |
+| `attach_reference` | `task_id`, `file_path` or `content_base64` + `filename`, `note` | Attaches material to work from (a mockup, a screenshot of the bug); any status, usually right after `add_task` |
+| `read_attachment` | `attachment_id` | Returns an attachment so the model can use it: images as image content, text files as text. Agents read reference files before starting a task |
+| `get_tasks` | none | Returns every live task as JSON, including `comments` (why a reviewer sent it back), `evidence_type`/`evidence_note`, and `attachments` (each with `kind`: `reference` or `evidence`). Deleted tasks are not included |
 | `update_task_status` | `task_id`, `status`, `description` | Moves the task one step: Pending to In Progress, or In Progress to Needs Review (needs results in `description` or existing subtasks, and the evidence the task asks for). Refuses anything else and names the next step; the API's refusals come back as "Refused: ..." |
 | `update_task_details` | `task_id`, `description`, `subtasks` | Replaces the description and, if given, the subtask list |
 | `approve_task` | `task_id` | Moves one task from Needs Review to Completed; refuses any other status |
 | `bulk_approve_tasks` | none | Moves every Needs Review task to Completed and lists any that failed |
-| `delete_task` | `task_id` | Deletes the task |
+| `delete_task` | `task_id`, `reason` (required) | Agents always need a reason. Pending: deleted (to the board's Deleted tab). In Progress: not deleted; files a deletion request a person approves or rejects on the board (the answer lands in the task's comments). Needs Review / Completed: refused |
 
 Every write sends `actor: AI:<agent name>`, so the activity log shows which agent did it. The name is the `X-Agent-Name` header if sent, else `clientInfo.name` from the MCP handshake. Tools read one task with `GET /api/tasks/{id}` and send only the changed fields with `PATCH`, so they never overwrite a person's edits to other fields. Tools return an error string instead of raising.
 

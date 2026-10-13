@@ -19,7 +19,7 @@ ENV/
 Thumbs.db
 
 # Databases
-data/*.db
+data/
 
 # Logs
 logs/

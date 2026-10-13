@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import contextlib
+import inspect
 from datetime import datetime, timezone
 import json
 import logging
@@ -98,15 +100,39 @@ def api(method, path, **kwargs):
 
 
 def api_error(task_id, e):
-    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None and e.response.status_code == 404:
+    """Turn an API failure into a message the agent can act on (the API explains refused moves)."""
+    response = getattr(e, "response", None)
+    if response is not None and response.status_code == 404:
         return f"Task {task_id} not found."
+    if response is not None and 400 <= response.status_code < 500:
+        try:
+            return f"Refused: {response.json()['detail']}"
+        except (ValueError, KeyError, TypeError):
+            pass
     return f"Task API error: {e}"
 
 
+EVIDENCE = {"screenshot", "attachment", "none"}
+MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
+
+
 @mcp.tool()
-def add_task(ctx: Context, title: str, description: str = "", priority: str = "medium") -> str:
-    """Add a new task. It starts in Pending."""
+def add_task(ctx: Context, title: str, description: str = "", priority: str = "medium",
+             evidence: str = "screenshot", evidence_details: str = "") -> str:
+    """Add a new task. It always starts in Pending.
+
+    evidence: proof needed before the task can go to Needs Review:
+      "screenshot" (default) - at least one image of the result,
+      "attachment" - any file; say which in evidence_details (required),
+      "none" - no proof needed.
+    evidence_details: what the evidence should show, e.g. "the login page after the fix".
+    """
     actor = agent_actor(ctx)
+    evidence = (evidence or "screenshot").strip().lower()
+    if evidence not in EVIDENCE:
+        return f"Unknown evidence '{evidence}'. Use screenshot, attachment or none."
+    if evidence == "attachment" and not evidence_details.strip():
+        return "Say what attachment is needed in evidence_details."
     logger.info(f"{actor} creating task: '{title}' [Priority: {priority}]")
     task_id = str(int(time.time() * 1000))
     payload = {
@@ -118,20 +144,29 @@ def add_task(ctx: Context, title: str, description: str = "", priority: str = "m
         "creator": actor,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "subtasks": [],
+        "evidence_type": evidence,
+        "evidence_note": evidence_details.strip(),
         "actor": actor,
     }
     try:
         api("POST", "/tasks", json=payload)
         logger.success(f"Task #{task_id} ('{title}') created.")
-        return f"Task created: {title} (id {task_id}, status Pending)."
+        return f"Task created: {title} (id {task_id}, status Pending, evidence: {evidence})."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to create task '{title}': {e}")
-        return f"Error adding task: {e}"
+        return api_error(task_id, e)
 
 
 @mcp.tool()
 def get_tasks() -> str:
-    """List every task as JSON. Call this before changing any task."""
+    """List every task as JSON. Call this before changing any task.
+
+    Each task has:
+      comments - notes from people; kind "sent_back" says why a reviewer sent the task back. Read these first
+                 when a task you worked on is In Progress or Pending again.
+      evidence_type / evidence_note - proof needed before Needs Review (screenshot, attachment or none).
+      attachments - evidence already attached (filename, content_type, uploaded_by).
+    """
     logger.info("Fetching tasks list from backend...")
     try:
         return json.dumps(api("GET", "/tasks"))
@@ -144,7 +179,8 @@ def get_tasks() -> str:
 def update_task_status(ctx: Context, task_id: str, status: str, description: str = "") -> str:
     """Move a task one step forward: Pending -> In Progress -> Needs Review.
 
-    Moving to Needs Review requires `description` with your results (or subtasks already on the task).
+    Moving to Needs Review requires `description` with your results (or subtasks already on the task),
+    and the evidence the task asks for (see evidence_type; attach it with attach_evidence first).
     To finish a task in Needs Review, call approve_task instead.
     """
     actor = agent_actor(ctx)
@@ -174,6 +210,36 @@ def update_task_status(ctx: Context, task_id: str, status: str, description: str
         return f"Task {task_id} moved from {current} to {target}."
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to update Task #{task_id}: {e}")
+        return api_error(task_id, e)
+
+
+@mcp.tool()
+def attach_evidence(ctx: Context, task_id: str, file_path: str = "", content_base64: str = "",
+                    filename: str = "", note: str = "") -> str:
+    """Attach a screenshot or other file as evidence of your work (max 10 MB).
+
+    Give file_path (a file on this machine, e.g. a screenshot you saved), or content_base64 plus filename.
+    Tasks whose evidence_type is "screenshot" need an image (png, jpg, gif, webp) before Needs Review;
+    "attachment" accepts any file. note: what the file shows.
+    """
+    actor = agent_actor(ctx)
+    if file_path:
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            return f"No file at {file_path}."
+        if path.stat().st_size > MAX_EVIDENCE_BYTES:
+            return "The file is larger than 10 MB."
+        content_base64 = base64.b64encode(path.read_bytes()).decode()
+        filename = filename or path.name
+    if not content_base64 or not filename:
+        return "Give file_path, or content_base64 together with filename."
+    try:
+        att = api("POST", f"/tasks/{task_id}/attachments",
+                  json={"filename": filename, "content_base64": content_base64, "note": note, "actor": actor})
+        logger.success(f"{actor} attached '{att['filename']}' to Task #{task_id}.")
+        return f"Attached {att['filename']} ({att['content_type']}, {att['size']} bytes) to task {task_id}."
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to attach evidence to Task #{task_id}: {e}")
         return api_error(task_id, e)
 
 
@@ -307,7 +373,7 @@ class AgentGate:
         if path == "/status":
             origin = headers.get("origin", "")
             cors = [(b"access-control-allow-origin", origin.encode())] if origin in UI_ORIGINS else []
-            return await _send_json(send, 200, {"server": mcp.name, "agents": connected_agents(key)}, cors)
+            return await _send_json(send, 200, {"server": mcp.name, "agents": connected_agents(key), "tools": await tool_catalog()}, cors)
 
         # Disconnect button on the board: POST /agents/<id>/disconnect with the API key (CORS: board only)
         disconnect = re.fullmatch(r"/agents/([\w-]+)/disconnect", path)
@@ -460,6 +526,21 @@ def _sessions(key):
             agents.append({"id": session_id, "name": client["name"], "version": client["version"],
                            "connected_at": client["connected_at"], "key_valid": True})
     return agents
+
+
+async def tool_catalog():
+    """Every MCP tool with its description and parameters, so the board can list them for people."""
+    catalog = []
+    for tool in await mcp.list_tools():
+        schema = tool.inputSchema or {}
+        required = set(schema.get("required", []))
+        catalog.append({
+            "name": tool.name,
+            "description": inspect.cleandoc(tool.description or ""),
+            "params": [{"name": name, "required": name in required, "default": spec.get("default")}
+                       for name, spec in schema.get("properties", {}).items()],
+        })
+    return catalog
 
 
 def disconnect_agent(agent_id):

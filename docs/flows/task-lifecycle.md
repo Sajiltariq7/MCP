@@ -26,16 +26,18 @@ Each move adds one `UPDATE_TASK` row to `activity_logs`. All timestamps are UTC.
 
 | Mover | Allowed moves | Enforced in |
 | --- | --- | --- |
-| An agent (MCP tools) | Only the next step; Completed only through `approve_task` / `bulk_approve_tasks` | `mcp_server/server.py` (`NEXT_STATUS`) |
-| A person (board) | Any column, by drag, touch drag, or the status picker | Not enforced, on purpose |
-| Any caller of the REST API directly | Any status | Not enforced |
+| Anyone (board, agents, direct API calls) | Pending to In Progress; In Progress to Needs Review or Pending; Needs Review to Completed, In Progress or Pending; Completed to Needs Review or In Progress. Going back from Needs Review or Completed needs a comment. Needs Review needs the task's evidence | `backend/app.py` (`ALLOWED_MOVES`, `check_move`), `task check-api` |
+| An agent (MCP tools) | Stricter: only forward, one step; Completed only through `approve_task` / `bulk_approve_tasks` | `mcp_server/server.py` (`NEXT_STATUS`), `task check-mcp` |
+| A person (board) | The same rules, checked before sending: a refused move explains itself; going back asks for the reason | `frontend/script.js` (`requestMove`) |
 
 ## How it fails
 
 | What | Result |
 | --- | --- |
 | An agent skips a step | The tool refuses and names the next step |
-| A person drags Pending straight to Needs Review or Completed | Allowed. `started_at` is empty, so `duration_ms` stays empty and no duration shows |
+| Anyone moves Pending straight to Needs Review or Completed | Refused (`409`): "Move it to In Progress first." |
+| Needs Review without the evidence | Refused: the message says what is missing (e.g. a screenshot of the login page) |
+| Going back from Needs Review without a comment | Refused; on the board a dialog asks for the reason first |
 | A status spelled oddly (`in-progress`) | The API stores `Pending`; the MCP tool answers "Unknown status" |
 | Moving back to In Progress | `started_at` is kept, so the timer continues from the first start |
 

@@ -14,6 +14,7 @@ let state = {
   showKey: false,
   mcpOnline: null,
   agents: [],
+  tools: [],
   reportMode: 'day',
   report: null,
   editingTaskId: null,
@@ -175,30 +176,34 @@ function switchTab(tabName) {
    ========================================== */
 function openTaskModal(taskId = null) {
   const modal = document.getElementById('taskModal');
-  const title = document.getElementById('modalTitle');
+  const task = taskId ? state.tasks.find(t => String(t.id) === String(taskId)) : null;
+  if (taskId && !task) return;
   state.editingTaskId = taskId;
 
-  if (taskId) {
-    const task = state.tasks.find(t => String(t.id) === String(taskId));
-    if (!task) return;
+  document.getElementById('modalTitle').textContent = task ? 'Edit task' : 'New task';
+  document.getElementById('taskTitleInput').value = task?.title || '';
+  document.getElementById('taskDescInput').value = task?.description || '';
+  document.getElementById('taskPriorityInput').value = task?.priority || 'medium';
+  document.getElementById('taskDueDateInput').value = task?.due_date || '';
+  // Most tasks need a screenshot, so that is the default for new ones
+  document.getElementById('taskEvidenceInput').value = task ? (task.evidence_type || 'none') : 'screenshot';
+  document.getElementById('taskEvidenceNote').value = task?.evidence_note || '';
+  document.getElementById('newTaskHint').classList.toggle('hidden', Boolean(task));
+  syncEvidenceNote();
 
-    if (title) title.textContent = 'Edit task';
-    document.getElementById('taskTitleInput').value = task.title || '';
-    document.getElementById('taskDescInput').value = task.description || '';
-    document.getElementById('taskPriorityInput').value = task.priority || 'medium';
-    document.getElementById('taskStatusInput').value = normalizeStatus(task.status);
-    document.getElementById('taskDueDateInput').value = task.due_date || '';
-  } else {
-    if (title) title.textContent = 'New task';
-    document.getElementById('taskTitleInput').value = '';
-    document.getElementById('taskDescInput').value = '';
-    document.getElementById('taskPriorityInput').value = 'medium';
-    document.getElementById('taskStatusInput').value = 'pending';
-    document.getElementById('taskDueDateInput').value = '';
-  }
-
-  if (modal) modal.classList.remove('hidden');
+  modal.classList.remove('hidden');
   document.getElementById('taskTitleInput').focus();
+}
+
+// "Another attachment" must say which file; "No evidence" needs no note
+function syncEvidenceNote() {
+  const kind = document.getElementById('taskEvidenceInput').value;
+  const note = document.getElementById('taskEvidenceNote');
+  note.classList.toggle('hidden', kind === 'none');
+  note.required = kind === 'attachment';
+  note.placeholder = kind === 'attachment'
+    ? 'Which file is needed? e.g. the exported CSV report'
+    : 'What should the screenshot show? (optional) e.g. the login page after the fix';
 }
 
 function closeTaskModal() {
@@ -222,7 +227,10 @@ function taskPayload(task) {
     started_at: task.started_at || null,
     completed_at: task.completed_at || null,
     duration_ms: task.duration_ms || null,
-    subtasks: parseSubtasks(task.subtasks)
+    subtasks: parseSubtasks(task.subtasks),
+    evidence_type: task.evidence_type || 'none',
+    evidence_note: task.evidence_note || '',
+    comments: task.comments || []
   };
 }
 
@@ -241,7 +249,13 @@ async function send(op) {
       headers: { 'Content-Type': 'application/json' },
       body: op.body ? JSON.stringify(op.body) : undefined
     });
-    if (res.status >= 400 && res.status < 500) console.warn(`Change dropped (${res.status}):`, op);
+    if (res.status >= 400 && res.status < 500) {
+      // Refused for good (a lifecycle rule, a deleted task): say why, then reload what the API has
+      let detail = `The change was refused (${res.status}).`;
+      try { detail = (await res.json()).detail || detail; } catch (err) { /* not JSON */ }
+      showToast(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      setTimeout(fetchTasks, 0);
+    }
     return res.status < 500;
   } catch (err) {
     return false;
@@ -271,86 +285,60 @@ async function flushOutbox() {
   return true;
 }
 
+// New tasks always start in Pending; status changes go through requestMove() (drag, or the detail view)
 async function saveTask() {
-  const title = document.getElementById('taskTitleInput')?.value.trim();
-  const description = document.getElementById('taskDescInput')?.value.trim();
-  const priority = document.getElementById('taskPriorityInput')?.value || 'medium';
-  const rawStatus = document.getElementById('taskStatusInput')?.value || 'pending';
-  const status = toTitleStatus(normalizeStatus(rawStatus));
-  const dueDate = document.getElementById('taskDueDateInput')?.value || null;
+  const title = document.getElementById('taskTitleInput').value.trim();
+  const description = document.getElementById('taskDescInput').value.trim();
+  const priority = document.getElementById('taskPriorityInput').value || 'medium';
+  const dueDate = document.getElementById('taskDueDateInput').value || null;
+  const evidenceType = document.getElementById('taskEvidenceInput').value;
+  const evidenceNote = evidenceType === 'none' ? '' : document.getElementById('taskEvidenceNote').value.trim();
 
-  if (!title) {
-    alert('Please enter a task title.');
-    return;
-  }
+  if (!title) return alert('Please enter a task title.');
+  if (evidenceType === 'attachment' && !evidenceNote) return alert('Say which attachment is needed.');
 
-  const now = new Date().toISOString();
-  const timeStr = getShortTime(now);
-  let task = state.editingTaskId 
-    ? state.tasks.find(t => String(t.id) === String(state.editingTaskId)) 
-    : null;
-
-  const norm = normalizeStatus(status);
+  let task = state.editingTaskId ? state.tasks.find(t => String(t.id) === String(state.editingTaskId)) : null;
   let patch = null;
 
   if (task) {
     const changes = [];
-    const oldNormStatus = normalizeStatus(task.status);
-    
-    if (oldNormStatus !== norm) {
-      if (norm === 'in_progress') {
-        changes.push(`Task shifted to IN PROGRESS state (AT: ${timeStr})`);
-      } else if (norm === 'needs_review') {
-        changes.push(`Task status updated to NEEDS REVIEW`);
-      } else if (norm === 'completed') {
-        changes.push(`Task marked as COMPLETED (AT: ${timeStr})`);
-      } else {
-        changes.push(`Task moved back to PENDING state`);
-      }
-    }
-
     if (task.title !== title) changes.push(`Title updated to "${title}"`);
-    if (task.priority !== priority) changes.push(`Priority changed to ${priority.toUpperCase()}`);
-    if (task.description !== description) changes.push(`Task description modified`);
-    
-    const updateSummary = changes.length > 0 ? changes.join(' | ') : 'Task configuration updated';
+    if ((task.priority || 'medium') !== priority) changes.push(`Priority changed to ${priority.toUpperCase()}`);
+    if ((task.description || '') !== description) changes.push('Task description modified');
+    if ((task.evidence_type || 'none') !== evidenceType || (task.evidence_note || '') !== evidenceNote) changes.push('Evidence requirement changed');
 
     // Send only what changed, so an agent's edits to other fields of this task survive
     patch = { actor: 'USER' };
     if (task.title !== title) patch.title = title;
     if ((task.description || '') !== description) patch.description = description;
     if ((task.priority || 'medium') !== priority) patch.priority = priority;
-    if (oldNormStatus !== norm) patch.status = status;
     if ((task.due_date || null) !== dueDate) patch.due_date = dueDate;
+    if ((task.evidence_type || 'none') !== evidenceType) patch.evidence_type = evidenceType;
+    if ((task.evidence_note || '') !== evidenceNote) patch.evidence_note = evidenceNote;
 
-    task.title = title;
-    task.description = description;
-    task.priority = priority;
-    task.status = status;
-    task.due_date = dueDate;
-    
-    addLocalAuditLog('UPDATE', task.title, 'USER', task.id, updateSummary);
+    Object.assign(task, { title, description, priority, due_date: dueDate, evidence_type: evidenceType, evidence_note: evidenceNote });
+    addLocalAuditLog('UPDATE', task.title, 'USER', task.id, changes.join(' | ') || 'Task configuration updated');
   } else {
     task = {
       id: String(Date.now()),
       title,
       description,
       priority,
-      status,
+      status: 'Pending',
       due_date: dueDate,
       creator: 'human',
-      created_at: now,
-      started_at: norm === 'in_progress' ? now : null,
-      completed_at: norm === 'completed' ? now : null,
+      created_at: new Date().toISOString(),
+      started_at: null,
+      completed_at: null,
       duration_ms: null,
-      subtasks: []
+      subtasks: [],
+      evidence_type: evidenceType,
+      evidence_note: evidenceNote,
+      comments: [],
+      attachments: []
     };
     state.tasks.push(task);
-    
-    let initialDesc = `Task created in ${status} state`;
-    if (norm === 'in_progress') initialDesc = `Task created and shifted directly to IN PROGRESS (AT: ${timeStr})`;
-    
-    addLocalAuditLog('CREATE', task.title, 'USER', task.id, initialDesc);
+    addLocalAuditLog('CREATE', task.title, 'USER', task.id, 'Task created in Pending');
   }
 
   saveToLocalStorage();
@@ -380,7 +368,7 @@ async function toggleSubtask(taskId, index) {
   }
 }
 
-async function updateTaskStatus(taskId, rawNewStatus) {
+async function updateTaskStatus(taskId, rawNewStatus, comment = '') {
   const task = state.tasks.find(t => String(t.id) === String(taskId));
   if (!task) return;
 
@@ -389,6 +377,7 @@ async function updateTaskStatus(taskId, rawNewStatus) {
   const now = new Date().toISOString();
   const timeStr = getShortTime(now);
 
+  const previousStatus = task.status;
   task.status = formattedStatus;
 
   let updateSummary = `Task status updated to ${formattedStatus}`;
@@ -415,10 +404,18 @@ async function updateTaskStatus(taskId, rawNewStatus) {
     updateSummary = `Task moved back to PENDING state`;
   }
 
+  if (comment) {
+    const from = STATUS_LABEL[normalizeStatus(previousStatus)];
+    const backward = isBackward(normalizeStatus(previousStatus), newStatusNormalized);
+    task.comments = [...(task.comments || []), { author: 'USER', text: comment, at: now, kind: backward ? 'sent_back' : 'note', from, to: STATUS_LABEL[newStatusNormalized] }];
+    updateSummary += ` (sent back: ${comment})`;
+  }
+
   addLocalAuditLog('UPDATE', task.title, 'USER', task.id, updateSummary);
   saveToLocalStorage();
   renderDashboard();
-  await write('PATCH', `/tasks/${task.id}`, { status: formattedStatus, actor: 'USER' });
+  refreshDetail(taskId);
+  await write('PATCH', `/tasks/${task.id}`, { status: formattedStatus, actor: 'USER', ...(comment ? { comment } : {}) });
 }
 
 async function deleteTask(taskId) {
@@ -434,15 +431,23 @@ async function deleteTask(taskId) {
   await write('DELETE', `/tasks/${encodeURIComponent(taskId)}?actor=USER`);
 }
 
-// After a delete, offer Undo for 8 seconds. Undo puts the task back with its history and timestamps.
+// A short message at the bottom of the screen, optionally with one action button
 let undoTimer = null;
-function showUndo(task) {
+function showToast(text, actionLabel = '', action = null, ms = 8000) {
   const toast = document.getElementById('toast');
-  document.getElementById('toast-text').textContent = `Deleted "${task.title || 'Untitled'}".`;
-  document.getElementById('toast-undo').onclick = () => restoreTask(task);
+  const button = document.getElementById('toast-undo');
+  document.getElementById('toast-text').textContent = text;
+  button.classList.toggle('hidden', !action);
+  button.textContent = actionLabel;
+  button.onclick = () => { toast.classList.add('hidden'); action(); };
   toast.classList.remove('hidden');
   clearTimeout(undoTimer);
-  undoTimer = setTimeout(() => toast.classList.add('hidden'), 8000);
+  undoTimer = setTimeout(() => toast.classList.add('hidden'), ms);
+}
+
+// After a delete, offer Undo for 8 seconds. Undo puts the task back with its history and timestamps.
+function showUndo(task) {
+  showToast(`Deleted "${task.title || 'Untitled'}".`, 'Undo', () => restoreTask(task));
 }
 
 async function restoreTask(task) {
@@ -453,6 +458,145 @@ async function restoreTask(task) {
   saveToLocalStorage();
   renderDashboard();
   await write('POST', '/tasks?restore=true', taskPayload(task));
+}
+
+/* ==========================================
+   STATUS MOVES: the same rules the API enforces for people and agents
+   ========================================== */
+const ALLOWED_MOVES = {
+  pending: ['in_progress'],
+  in_progress: ['needs_review', 'pending'],
+  needs_review: ['completed', 'in_progress', 'pending'],
+  completed: ['needs_review', 'in_progress']
+};
+const NEXT_HINT = { pending: 'Move it to In progress first.', in_progress: 'Move it to Needs review first; approving it completes it.' };
+// Going back needs a reason: review -> work, or reopening a completed task (to review or to work)
+const isBackward = (from, to) => (['needs_review', 'completed'].includes(from) && ['in_progress', 'pending'].includes(to)) || (from === 'completed' && to === 'needs_review');
+
+// What evidence is still missing before review, or null
+function missingEvidence(t) {
+  const kind = t.evidence_type || 'none';
+  const files = t.attachments || [];
+  const what = t.evidence_note ? `: ${t.evidence_note}` : '';
+  if (kind === 'screenshot' && !files.some(a => (a.content_type || '').startsWith('image/'))) return `It needs a screenshot first${what}.`;
+  if (kind === 'attachment' && !files.length) return `It needs an attachment first${what}.`;
+  return null;
+}
+
+// If the detail view shows this task, redraw it (e.g. to reset its status picker)
+function refreshDetail(taskId) {
+  const open = !document.getElementById('detailModal').classList.contains('hidden');
+  if (open && String(state.detailTaskId) === String(taskId)) openDetailModal(taskId);
+}
+
+// Every status change on the board goes through here: drag, touch drag, and the detail view's picker
+function requestMove(taskId, rawTo) {
+  const task = state.tasks.find(t => String(t.id) === String(taskId));
+  if (!task) return;
+  const from = normalizeStatus(task.status);
+  const to = normalizeStatus(rawTo);
+  if (from === to) return;
+
+  if (!ALLOWED_MOVES[from].includes(to)) {
+    showToast(`Can't move "${task.title}" from ${STATUS_LABEL[from]} to ${STATUS_LABEL[to]}. ${NEXT_HINT[from] || ''}`);
+    return refreshDetail(taskId);
+  }
+  if (to === 'needs_review') {
+    const missing = missingEvidence(task);
+    if (missing) {
+      showToast(`"${task.title}" can't go to review yet. ${missing}`, 'Open task', () => openDetailModal(taskId));
+      return refreshDetail(taskId);
+    }
+  }
+  if (isBackward(from, to)) return openReasonModal(task, from, to);
+  return updateTaskStatus(taskId, to);
+}
+
+// Sending a task back from review (or reopening it) needs a reason, which the agent will read
+let pendingMove = null;
+function openReasonModal(task, from, to) {
+  pendingMove = { id: task.id, to };
+  document.getElementById('reasonTitle').textContent = from === 'completed' ? `Reopen to ${STATUS_LABEL[to]}` : `Send back to ${STATUS_LABEL[to]}`;
+  document.getElementById('reasonText').textContent = `"${task.title}" moves from ${STATUS_LABEL[from]} back to ${STATUS_LABEL[to]}.`;
+  const input = document.getElementById('reasonInput');
+  input.value = '';
+  document.getElementById('reasonModal').classList.remove('hidden');
+  input.focus();
+}
+
+function closeReasonModal() {
+  document.getElementById('reasonModal').classList.add('hidden');
+  if (pendingMove) refreshDetail(pendingMove.id);
+  pendingMove = null;
+}
+
+async function submitReason() {
+  const reason = document.getElementById('reasonInput').value.trim();
+  if (!reason || !pendingMove) return;
+  const move = pendingMove;
+  pendingMove = null;
+  document.getElementById('reasonModal').classList.add('hidden');
+  await updateTaskStatus(move.id, move.to, reason);
+}
+
+/* ==========================================
+   EVIDENCE: attach files from the detail view
+   ========================================== */
+const MAX_UPLOAD = 10 * 1024 * 1024;
+const fileBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1]);
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+async function uploadEvidence(taskId, input) {
+  const files = [...input.files];
+  input.value = '';
+  for (const file of files) {
+    if (file.size > MAX_UPLOAD) { showToast(`${file.name} is larger than 10 MB.`); continue; }
+    try {
+      const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, content_base64: await fileBase64(file), actor: 'USER' })
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `error ${res.status}`);
+    } catch (err) {
+      showToast(`Couldn't attach ${file.name}: ${err.message === 'Failed to fetch' ? 'the API is offline' : err.message}`);
+    }
+  }
+  await fetchTasks();
+  fetchAuditLogs();
+  refreshDetail(taskId);
+}
+
+const attachmentUrl = (a) => `${API.replace(/\/api$/, '')}${a.url}`;
+
+function evidenceThumb(a) {
+  const url = attachmentUrl(a);
+  const image = /^image\/(png|jpeg|gif|webp)$/.test(a.content_type || '');
+  const by = isAgentActor(a.uploaded_by) ? agentName(a.uploaded_by) : 'Human';
+  return `<a class="evidence-item" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(a.note || a.filename)}">
+      ${image ? `<img src="${esc(url)}" alt="${esc(a.note || a.filename)}" loading="lazy">` : `<span class="evidence-file"><i class="fa-solid fa-file-lines" aria-hidden="true"></i></span>`}
+      <span class="evidence-name">${esc(a.filename)}</span>
+      <span class="evidence-by">${esc(by)}</span>
+    </a>`;
+}
+
+function evidenceChip(t) {
+  const kind = t.evidence_type || 'none';
+  if (kind === 'none') return '';
+  const missing = missingEvidence(t);
+  const icon = kind === 'screenshot' ? 'fa-camera' : 'fa-paperclip';
+  const label = missing ? (kind === 'screenshot' ? 'Screenshot needed' : 'Attachment needed') : `${(t.attachments || []).length} attached`;
+  return `<span class="chip ${missing ? 'tone-4' : 'tone-3'}" title="${esc(missing || 'Evidence attached')}"><i class="fa-solid ${icon}" aria-hidden="true"></i>&nbsp;${label}</span>`;
+}
+
+// The latest comment, when it is the reason the task was sent back and the task is still where it was sent
+function sentBackComment(t, statusKey) {
+  const last = (t.comments || []).at(-1);
+  return last?.kind === 'sent_back' && normalizeStatus(last.to) === statusKey ? last : null;
 }
 
 /* ==========================================
@@ -534,20 +678,49 @@ function openDetailModal(taskId) {
     elapsedTime = `${getElapsed(task.started_at)} (${label})`;
   }
 
+  const kind = task.evidence_type || 'none';
+  const missing = missingEvidence(task);
+  const files = task.attachments || [];
+  const evidenceHtml = `
+    <section class="stack-sm">
+      <h4>Evidence</h4>
+      <p class="row soft">${kind === 'none' ? 'No evidence needed for this task.'
+        : `Needs ${kind === 'screenshot' ? 'a screenshot' : 'an attachment'}${task.evidence_note ? `: ${esc(task.evidence_note)}` : ''}.`}
+        ${kind === 'none' ? '' : missing ? '<span class="chip tone-4">Missing</span>' : '<span class="chip tone-3">Attached</span>'}</p>
+      ${files.length ? `<div class="evidence-grid">${files.map(evidenceThumb).join('')}</div>` : ''}
+      <div class="row">
+        <button class="btn btn-sm" onclick="this.nextElementSibling.click()"><i class="fa-solid fa-paperclip" aria-hidden="true"></i> Attach file</button>
+        <input type="file" multiple hidden aria-label="Attach evidence" onchange="uploadEvidence('${esc(task.id)}', this)">
+        <span class="hint soft">Images or any file, up to 10 MB each.</span>
+      </div>
+    </section>`;
+  const comments = task.comments || [];
+  const commentsHtml = !comments.length ? '' : `
+    <section class="stack-sm">
+      <h4>Comments</h4>
+      <ul class="comments">${comments.slice().reverse().map(c => `
+        <li class="${c.kind === 'sent_back' ? 'sent-back' : 'note-box'}">
+          <span><b>${c.kind === 'sent_back' ? `Sent back to ${esc(c.to || '')}` : 'Note'}</b> · ${esc(isAgentActor(c.author) ? agentName(c.author) : 'Human')} · <time>${logTime(c.at)}</time></span>
+          <span>${esc(c.text)}</span>
+        </li>`).join('')}</ul>
+    </section>`;
+
   detailBody.innerHTML = `
     <div class="row"><h3 style="font-size:22px; overflow-wrap:anywhere">${esc(task.title)}</h3><span class="badge-key">#${esc(task.id)}</span>${priorityChip(task.priority)}</div>
     <div class="note-box">${esc(task.description || 'No description provided.')}</div>
     <dl class="meta">
       <div><dt><label for="detailStatus">Status</label></dt><dd>
-        <select id="detailStatus" class="input input-sm" onchange="updateTaskStatus('${esc(task.id)}', this.value).then(() => openDetailModal('${esc(task.id)}'))">
-          ${['pending', 'in_progress', 'needs_review', 'completed'].map(k => `<option value="${k}" ${k === normStatus ? 'selected' : ''}>${STATUS_LABEL[k]}</option>`).join('')}
+        <select id="detailStatus" class="input input-sm" onchange="requestMove('${esc(task.id)}', this.value)">
+          ${['pending', 'in_progress', 'needs_review', 'completed'].map(k => `<option value="${k}" ${k === normStatus ? 'selected' : ''} ${k !== normStatus && !ALLOWED_MOVES[normStatus].includes(k) ? 'disabled' : ''}>${STATUS_LABEL[k]}</option>`).join('')}
         </select></dd></div>
-      <div><dt>Creator</dt><dd>${esc(task.creator || 'human')}</dd></div>
+      <div><dt>Creator</dt><dd>${isAgentActor(task.creator) ? `${esc(agentName(task.creator))} (AI agent)` : 'Human'}</dd></div>
       <div><dt>Due date</dt><dd class="mono">${esc(task.due_date || 'None')}${isOverdue(task) ? ' <span class="chip tone-5">Overdue</span>' : ''}</dd></div>
       <div><dt>Time spent</dt><dd class="mono">${elapsedTime}</dd></div>
       <div><dt>Created</dt><dd class="mono">${formatDate(task.created_at)}</dd></div>
       <div><dt>Subtasks</dt><dd><span class="chip">${completedCount} of ${subtasks.length} done</span></dd></div>
     </dl>
+    ${evidenceHtml}
+    ${commentsHtml}
     <section class="stack-sm"><h4>Subtasks</h4>${subtasksHtml}</section>
     <section class="stack-sm"><h4>History</h4><ol id="taskHistory" class="timeline"></ol></section>
     <div class="modal-foot">
@@ -556,6 +729,7 @@ function openDetailModal(taskId) {
     </div>
   `;
 
+  state.detailTaskId = task.id;
   renderTaskHistory(task.id);
   document.getElementById('detailModal')?.classList.remove('hidden');
   fetchAuditLogs().then(() => renderTaskHistory(task.id)); // pick up the AI agent's latest changes
@@ -775,9 +949,11 @@ function taskCard(t, statusKey) {
   card.innerHTML = `
     <div class="task-top"><h3>${esc(t.title || 'Untitled')}</h3>${priorityChip(t.priority)}</div>
     ${t.description ? `<p class="desc">${esc(t.description)}</p>` : ''}
+    ${(() => { const c = sentBackComment(t, statusKey); return c ? `<p class="sent-back"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> <b>Sent back:</b> ${esc(c.text)}</p>` : ''; })()}
     <div class="task-foot">
       <span class="chip ${isAI ? 'tone-6' : ''}"><i class="fa-solid ${isAI ? 'fa-robot' : 'fa-user'}" aria-hidden="true"></i>&nbsp;${isAI ? esc(agentName(t.creator)) : 'Human'}</span>
       ${timeBadge(t, statusKey)}
+      ${evidenceChip(t)}
       ${overdue ? `<span class="chip tone-5"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>&nbsp;Overdue · ${esc(t.due_date)}</span>`
         : t.due_date ? `<span class="chip"><i class="fa-regular fa-calendar" aria-hidden="true"></i>&nbsp;${esc(t.due_date)}</span>` : ''}
       <span class="task-actions">
@@ -901,7 +1077,7 @@ function setupDragAndDrop() {
     col.classList.remove('drop-target');
     const id = e.dataTransfer.getData('text/plain');
     const task = state.tasks.find(t => String(t.id) === String(id));
-    if (task && normalizeStatus(task.status) !== col.dataset.status) updateTaskStatus(id, col.dataset.status);
+    if (task && normalizeStatus(task.status) !== col.dataset.status) requestMove(id, col.dataset.status);
   });
 }
 
@@ -975,7 +1151,7 @@ function setupTouchDrag() {
     const id = drag.card.dataset.id;
     stop();
     const task = state.tasks.find(t => String(t.id) === String(id));
-    if (col && task && normalizeStatus(task.status) !== col.dataset.status) updateTaskStatus(id, col.dataset.status);
+    if (col && task && normalizeStatus(task.status) !== col.dataset.status) requestMove(id, col.dataset.status);
   });
   board.addEventListener('touchcancel', stop);
   board.addEventListener('contextmenu', (e) => { if (drag || timer) e.preventDefault(); });
@@ -1068,6 +1244,8 @@ function buildReport(mode, dateStr) {
       due_date: t.due_date || null,
       is_overdue: isOverdue(t),
       subtasks: { done: subtasks.filter(s => s.done).length, total: subtasks.length, items: subtasks.map(s => ({ text: s.content, done: s.done })) },
+      evidence: { required: t.evidence_type || 'none', details: t.evidence_note || '', attached: (t.attachments || []).map(a => a.filename), missing: Boolean(missingEvidence(t)) },
+      comments: (t.comments || []).map(c => ({ kind: c.kind, text: c.text, by: isAgentActor(c.author) ? agentName(c.author) : 'person', when: localIso(new Date(c.at)) })),
       activity: logs.slice().reverse().map(l => ({
         when: localIso(new Date(l.timestamp)), actor: isAgentLog(l) ? agentName(l.actor) : (l.actor || 'USER'), actor_type: actorType(l), action: l.action, summary: getLogUpdateText(l)
       }))
@@ -1141,6 +1319,8 @@ function buildReport(mode, dateStr) {
     created_by_name: 'The agent\'s name (for example "opencode") when created_by is "ai_agent".',
     is_overdue: 'true when the due date has passed and the task is not completed.',
     completed_on: 'The date (YYYY-MM-DD) the task was completed inside this period, or null.',
+    evidence: 'Proof the task needs before review ("screenshot", "attachment" or "none"), the files attached, and whether it is still missing.',
+    comments: 'Notes on the task. kind "sent_back" is a reviewer explaining why the task went back.',
     board_now: 'How many tasks are in each column right now, across all time.'
   };
   return report;
@@ -1186,13 +1366,16 @@ async function fetchAgents() {
   try {
     const res = await fetch(`${MCP_URL}/status`);
     if (!res.ok) throw new Error();
-    state.agents = (await res.json()).agents || [];
+    const data = await res.json();
+    state.agents = data.agents || [];
+    state.tools = data.tools || [];
     state.mcpOnline = true;
   } catch (err) {
     state.agents = [];
     state.mcpOnline = false;
   }
   renderAgents();
+  renderTools();
 }
 
 function renderAgents() {
@@ -1227,6 +1410,30 @@ function renderAgents() {
         : `<span class="status tone-5"><i class="fa-solid fa-key" aria-hidden="true"></i>Old key: reconnect</span>`}
       ${a.ids?.length ? `<button class="btn btn-sm btn-warn" onclick="disconnectAgent('${esc(a.ids.join(','))}', this)" aria-label="Disconnect ${esc(a.name)}"><i class="fa-solid fa-plug-circle-xmark" aria-hidden="true"></i> Disconnect</button>` : ''}</span>
     </li>`).join('');
+}
+
+// The MCP tools, as the server describes them (so the list never drifts from the code)
+function renderTools() {
+  const list = document.getElementById('tool-list');
+  document.getElementById('n-tools').textContent = state.mcpOnline ? state.tools.length : 0;
+  if (!state.mcpOnline) {
+    list.dataset.sig = '';
+    list.innerHTML = `<div class="empty"><p>Start the MCP server (<code>task mcp</code>) to see its tools.</p></div>`;
+    return;
+  }
+  const sig = JSON.stringify(state.tools);
+  if (list.dataset.sig === sig) return; // unchanged: keep any open "More" sections open
+  list.dataset.sig = sig;
+  const optional = (p) => p.default !== null && p.default !== undefined && p.default !== '' ? `optional, default ${JSON.stringify(p.default)}` : 'optional';
+  list.innerHTML = state.tools.map(t => {
+    const [summary, ...more] = (t.description || '').split(/\n\s*\n/);
+    return `<article class="tool">
+      <div class="row"><span class="badge-key">${esc(t.name)}</span>${t.params.map(p =>
+        `<span class="chip ${p.required ? 'tone-1' : ''}" title="${esc(p.required ? 'required' : optional(p))}">${esc(p.name)}${p.required ? '' : '?'}</span>`).join('')}</div>
+      <p>${esc(summary)}</p>
+      ${more.length ? `<details><summary>More</summary><pre class="tool-doc">${esc(more.join('\n\n'))}</pre></details>` : ''}
+    </article>`;
+  }).join('');
 }
 
 async function fetchApiKey() {
@@ -1306,7 +1513,7 @@ async function copyText(text, btn) {
 // Escape closes the top modal; arrow keys move between view tabs
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    for (const [id, close] of [['taskModal', closeTaskModal], ['detailModal', closeDetailModal]]) {
+    for (const [id, close] of [['reasonModal', closeReasonModal], ['taskModal', closeTaskModal], ['detailModal', closeDetailModal]]) {
       if (!document.getElementById(id).classList.contains('hidden')) return close();
     }
   }

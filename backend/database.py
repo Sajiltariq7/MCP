@@ -5,6 +5,8 @@ from pathlib import Path
 
 # Lives in <repo>/data/tasks.db regardless of the working directory
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "tasks.db"
+# Evidence files (screenshots, attachments) live next to the database, also gitignored
+ATTACH_DIR = DB_PATH.parent / "attachments"
 
 def now_utc():
     """Every timestamp the backend stores is UTC ISO 8601, e.g. 2026-10-13T06:30:00.123456+00:00."""
@@ -57,6 +59,27 @@ def init_db():
             entity_type TEXT,
             entity_id TEXT,
             details TEXT
+        )
+    """)
+
+    # Columns added later: what evidence a task needs, and comments (e.g. why it was sent back)
+    existing = {row["name"] for row in cursor.execute("PRAGMA table_info(tasks)")}
+    for col, decl in {"evidence_type": "TEXT DEFAULT 'none'", "evidence_note": "TEXT DEFAULT ''", "comments": "TEXT DEFAULT '[]'"}.items():
+        if col not in existing:
+            cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col} {decl}")
+
+    # Evidence files attached to tasks; the bytes live in ATTACH_DIR
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attachments (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            filename TEXT,
+            content_type TEXT,
+            size INTEGER,
+            path TEXT,
+            note TEXT,
+            uploaded_by TEXT,
+            uploaded_at TEXT
         )
     """)
 

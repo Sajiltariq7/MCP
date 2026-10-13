@@ -5,6 +5,8 @@ Run: task check-mcp
      uv run python mcp_server/check_gate.py --rotate   (also tests key rotation; connected agents then need the new key)
 """
 import asyncio
+import base64
+import json
 import logging
 import sys
 
@@ -21,6 +23,9 @@ logger.add(sys.stderr, format="{level: <8} | {message}")
 logging.getLogger("mcp").setLevel(logging.CRITICAL)
 
 API = "http://127.0.0.1:8190/api"
+PNG = base64.b64encode(bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")).decode()
 MCP = "http://127.0.0.1:8001"
 
 
@@ -110,11 +115,23 @@ async def main():
                 assert "approve_task" in await call(session, "update_task_status", task_id=task_id, status="Completed")
                 assert "moved from Pending to In Progress" in await call(session, "update_task_status", task_id=task_id, status="in_progress")
                 assert "needs your results" in await call(session, "update_task_status", task_id=task_id, status="Needs Review")
+                text = await call(session, "update_task_status", task_id=task_id, status="Needs Review", description="All checks passed.")
+                assert "needs a screenshot" in text, text  # add_task defaults to evidence: screenshot
+                assert "Attached shot.png (image/png" in await call(session, "attach_evidence", task_id=task_id, content_base64=PNG, filename="shot.png", note="result")
                 assert "moved from In Progress to Needs Review" in await call(
                     session, "update_task_status", task_id=task_id, status="Needs Review", description="All checks passed.")
+                logger.success("task order enforced; review needs a screenshot, attached with attach_evidence")
+
+                # A person sends it back with a comment; the agent reads it through get_tasks
+                requests.patch(f"{API}/tasks/{task_id}", json={"status": "In Progress", "comment": "Logo is blurry", "actor": "USER"},
+                               timeout=3).raise_for_status()
+                mine = next(t for t in json.loads(await call(session, "get_tasks")) if t["id"] == task_id)
+                assert mine["status"] == "In Progress" and mine["comments"][-1]["text"] == "Logo is blurry", mine
+                assert "moved from In Progress to Needs Review" in await call(
+                    session, "update_task_status", task_id=task_id, status="Needs Review", description="Logo fixed.")
                 assert "approved" in await call(session, "approve_task", task_id=task_id)
                 assert requests.get(f"{API}/tasks/{task_id}", timeout=3).json()["status"] == "Completed"
-                logger.success("task order enforced: Pending -> In Progress -> Needs Review -> approve_task")
+                logger.success("sent-back comment reaches the agent; resubmit and approve_task complete it")
     finally:
         if task_id:
             requests.delete(f"{API}/tasks/{task_id}", params={"actor": "gate-check"}, timeout=3)

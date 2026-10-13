@@ -136,10 +136,17 @@
       <span id="mcp-status" class="status" role="status">Checking MCP server…</span>
     </div>
     <div class="two-col">
-      <div class="paper stack">
-        <h2>Connected agents</h2>
-        <ul id="agent-list" class="agent-list"></ul>
-        <p class="hint soft"><b>Disconnect</b> ends that agent's session right away. It can connect again with the key; to keep it out, rotate the key.</p>
+      <div class="agents-left">
+        <div class="paper stack">
+          <h2>Connected agents</h2>
+          <ul id="agent-list" class="agent-list"></ul>
+          <p class="hint soft"><b>Disconnect</b> ends that agent's session right away. It can connect again with the key; to keep it out, rotate the key.</p>
+        </div>
+        <div class="paper stack tools-paper">
+          <h2>Tools agents can use <span class="count" id="n-tools">0</span></h2>
+          <p class="soft">Everything a connected agent can call, read live from the MCP server. Blue chips are required parameters; <b>?</b> marks optional ones.</p>
+          <div id="tool-list" class="tool-list"></div>
+        </div>
       </div>
       <div class="paper stack">
         <h2>API key</h2>
@@ -196,13 +203,41 @@
     <div class="form-grid">
       <div class="field"><label for="taskPriorityInput">Priority</label>
         <select class="input" id="taskPriorityInput"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
-      <div class="field"><label for="taskStatusInput">Status</label>
-        <select class="input" id="taskStatusInput"><option value="pending">Pending</option><option value="in_progress">In progress</option><option value="needs_review">Needs review</option><option value="completed">Completed</option></select></div>
+      <div class="field"><label for="taskDueDateInput">Due date</label><input class="input" type="date" id="taskDueDateInput"></div>
     </div>
-    <div class="field"><label for="taskDueDateInput">Due date</label><input class="input" type="date" id="taskDueDateInput"></div>
+    <fieldset class="field evidence-field">
+      <legend>Evidence needed before review</legend>
+      <select class="input" id="taskEvidenceInput" aria-label="Evidence needed" onchange="syncEvidenceNote()">
+        <option value="screenshot" selected>Screenshot of the result</option>
+        <option value="attachment">Another attachment (say which)</option>
+        <option value="none">No evidence needed</option>
+      </select>
+      <input class="input" id="taskEvidenceNote" aria-label="What the evidence should show">
+      <span class="hint">Whoever finishes the task, a person or an agent, attaches this before it can go to Needs review.</span>
+    </fieldset>
+    <p class="notice notice-care" id="newTaskHint"><i class="fa-solid fa-hourglass-half" aria-hidden="true"></i> New tasks start in Pending. Move them to In progress when work begins.</p>
     <div class="modal-foot">
       <button type="button" class="btn" onclick="closeTaskModal()">Cancel</button>
       <button type="submit" class="btn btn-primary">Save task</button>
+    </div>
+  </form>
+</div>
+
+<!-- MODAL: WHY A TASK GOES BACK (agents read this comment) -->
+<div id="reasonModal" class="modal hidden" onclick="if (event.target === this) closeReasonModal()">
+  <form class="paper modal-card" role="dialog" aria-modal="true" aria-labelledby="reasonTitle" onsubmit="event.preventDefault(); submitReason()">
+    <div class="modal-head">
+      <h2 id="reasonTitle">Send back</h2>
+      <button type="button" class="btn btn-round btn-sm" onclick="closeReasonModal()" aria-label="Close"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <p class="soft" id="reasonText"></p>
+    <div class="field">
+      <label for="reasonInput">Why? It is saved on the card, and the agent or person working on it reads it.</label>
+      <textarea class="input" id="reasonInput" rows="3" required placeholder="e.g. The button is still misaligned on mobile."></textarea>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn" onclick="closeReasonModal()">Cancel</button>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Send back</button>
     </div>
   </form>
 </div>

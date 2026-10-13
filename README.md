@@ -117,7 +117,12 @@ Good to know:
 | **Needs review** | Work is done and waiting for a person to check it | `completed_at`, `duration_ms` |
 | **Completed** | Approved | `completed_at`, `duration_ms` |
 
-The MCP server enforces this for agents: a skipped step is refused with the next allowed step, moving to Needs review requires results, and only `approve_task` / `bulk_approve_tasks` reach Completed. People can drag a card to any column.
+The API enforces the order for everyone, people and agents:
+
+- **Pending** can only go to **In progress**. No jumping straight to review or done.
+- **Needs review** needs the task's **evidence**: a screenshot (the default for new tasks) or the attachment the task asks for. Attach it from the task's detail view, or with the `attach_evidence` MCP tool.
+- **Sending a task back** from Needs review, or reopening a completed one (back to review or to work), asks **why**. The reason shows on the card as "Sent back: ..." and in the task's comments, and agents read it with `get_tasks`.
+- Agents are stricter still: they only move forward one step, and only `approve_task` / `bulk_approve_tasks` complete a task.
 
 ## Using the board
 
@@ -129,7 +134,7 @@ The header has five tabs, a search box (filters the Board and Manager), and **Ne
 | **Manager** | All tasks in one table with status, creator and duration. |
 | **Activity** | Every action, newest first. Filter by **All**, **Agent** or **Human**, and on Agent pick one agent by name. |
 | **Report** | Builds a JSON summary of a day or a week for an AI to write up (below). |
-| **Agents** | Is the MCP server running, which agents are connected (with a **Disconnect** button each), and the API key. |
+| **Agents** | Is the MCP server running, which agents are connected (with a **Disconnect** button each), the API key, and every tool agents can call with its parameters (read live from the MCP server). |
 
 Cards made by an agent carry a pink chip with the agent's name; cards made by people say **Human**. Cards past their due date show **Overdue**. Deleting a task shows an **Undo** button for 8 seconds.
 
@@ -165,7 +170,8 @@ What a connected agent can call ([details](docs/mcp-tools.md)):
 | Tool | What it does |
 | --- | --- |
 | `get_tasks` | List every task. Agents call this before changing anything. |
-| `add_task(title, description, priority)` | Create a task (marked as made by an agent) |
+| `add_task(title, description, priority, evidence, evidence_details)` | Create a Pending task; `evidence` is `screenshot` (default), `attachment` (say which) or `none` |
+| `attach_evidence(task_id, file_path or content_base64 + filename, note)` | Attach a screenshot or file as evidence (10 MB max) |
 | `update_task_status(task_id, status, description)` | Move a task one step forward (refuses skipped steps; review needs results) |
 | `update_task_details(task_id, description, subtasks)` | Attach results, notes or a subtask checklist |
 | `approve_task(task_id)` | Move one task from Needs review to Completed |
@@ -181,7 +187,9 @@ Base URL `http://127.0.0.1:8190/api` ([details](docs/task-api.md)). Browsers may
 | `GET /tasks` | All tasks |
 | `GET /tasks/{id}` | One task |
 | `POST /tasks` | Create a task, or replace all its fields. `?restore=true` for an undone delete |
-| `PATCH /tasks/{id}` | Change only the fields you send |
+| `PATCH /tasks/{id}` | Change only the fields you send; `comment` is required to send a task back |
+| `POST /tasks/{id}/attachments` | Attach evidence (`filename`, `content_base64`) |
+| `GET /attachments/{id}` | Download an attached file |
 | `DELETE /tasks/{id}` | Delete a task |
 | `GET /audit` | The activity log |
 | `GET /mcp/key` | The current MCP API key |
@@ -204,7 +212,7 @@ frontend/
   style.css         Inkpop design system + board styles
 docs/               rules, flows, decisions (start at docs/index.md)
   diagrams/         the diagrams in this README
-data/tasks.db       the database (gitignored, created on first start)
+data/               the database and evidence files (gitignored, created on first start)
 logs/               MCP server logs (gitignored)
 Taskfile.yaml       the task commands
 opencode.json       project opencode config (no taskboard entry: add it with --global)

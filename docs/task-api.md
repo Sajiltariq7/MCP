@@ -12,14 +12,31 @@ Everything that changes a task, from the board or from an agent, goes through th
 | --- | --- | --- |
 | `GET /api/tasks` | Returns every task (oldest first), status normalized, subtasks parsed from JSON | Nothing |
 | `GET /api/tasks/{id}` | Returns one task, 404 if missing | Nothing |
-| `POST /api/tasks` | Creates the task if the `id` is new, otherwise replaces every field (upsert). `?restore=true` marks an undone delete | `tasks` row, one `activity_logs` row (`CREATE_TASK`, `RESTORE_TASK` or `UPDATE_TASK`) |
-| `PATCH /api/tasks/{id}` | Changes only the fields sent (`title`, `description`, `status`, `priority`, `due_date`, `subtasks`) and returns the task; 404 if missing | Those columns, one `UPDATE_TASK` log row |
+| `POST /api/tasks` | Creates the task if the `id` is new (always as Pending), otherwise replaces every field (upsert). `?restore=true` puts back an undone delete as it was | `tasks` row, one `activity_logs` row (`CREATE_TASK`, `RESTORE_TASK` or `UPDATE_TASK`) |
+| `PATCH /api/tasks/{id}` | Changes only the fields sent (`title`, `description`, `status`, `priority`, `due_date`, `subtasks`, `evidence_type`, `evidence_note`) and returns the task; `comment` is added to the task's comments; 404 if missing, 409 if the move breaks a rule below | Those columns, one `UPDATE_TASK` log row |
+| `POST /api/tasks/{id}/attachments` | Attaches evidence: `{filename, content_base64, note, actor}`, max 10 MB | A file in `data/attachments/`, an `attachments` row, one `ATTACH_EVIDENCE` log row |
+| `GET /api/attachments/{id}` | The file. PNG, JPEG, GIF and WebP show inline; every other type downloads, with `Content-Security-Policy: sandbox` | Nothing |
 | `DELETE /api/tasks/{id}?actor=` | Deletes the task, 404 if missing | Deletes the row, one `DELETE_TASK` log row |
 | `GET /api/audit` | Returns the activity log, newest first | Nothing |
 | `GET /api/mcp/key` | Returns the MCP API key | Nothing |
 | `POST /api/mcp/key/rotate` | Makes a new key (`tb_` + 32 random URL-safe characters); the old one stops working | `settings` row, one `ROTATE_KEY` log row |
 
 Prefer `PATCH` for changes: two editors working on different fields of the same task then both keep their edits. The board and the MCP tools both use it.
+
+## Moves, comments, evidence
+
+Every status change, from people or agents, must follow these moves; anything else gets `409` with a message naming the next step.
+
+| From | Allowed to |
+| --- | --- |
+| Pending | In Progress |
+| In Progress | Needs Review, Pending |
+| Needs Review | Completed, In Progress, Pending |
+| Completed | Needs Review, In Progress |
+
+- Moving back from Needs Review, or reopening a Completed task (to Needs Review or In Progress), needs a `comment`. It is stored in the task's `comments` as `{author, text, at, kind: "sent_back", from, to}` and the log line says "sent back: ...". Agents read it through `get_tasks`.
+- `evidence_type` is `screenshot`, `attachment` or `none` (older tasks: `none`); `evidence_note` says what it should show (required for `attachment`). Moving to Needs Review needs an image attachment for `screenshot`, any attachment for `attachment`.
+- Deleting a task keeps its attachments, so Undo brings them back.
 
 ## Statuses and timestamps
 
@@ -40,9 +57,10 @@ Every stored timestamp is UTC ISO 8601 (`...+00:00`), so the activity log sorts 
 
 | Table | Columns |
 | --- | --- |
-| `tasks` | `id` (text key), `title`, `description`, `status`, `priority`, `due_date`, `creator`, `created_at`, `started_at`, `completed_at`, `duration_ms`, `subtasks` (JSON text) |
+| `tasks` | `id` (text key), `title`, `description`, `status`, `priority`, `due_date`, `creator`, `created_at`, `started_at`, `completed_at`, `duration_ms`, `subtasks` (JSON text), `evidence_type`, `evidence_note`, `comments` (JSON text). `init_db` adds the last three to older databases |
 | `activity_logs` | `id`, `timestamp`, `actor`, `action`, `entity_type`, `entity_id`, `details` |
 | `settings` | `key`, `value`. Holds `mcp_api_key`, created on first start |
+| `attachments` | `id`, `task_id`, `filename`, `content_type`, `size`, `path` (file name in `data/attachments/`), `note`, `uploaded_by`, `uploaded_at` |
 
 `actor` is whatever the caller sends: the board sends `USER`, the MCP server sends `AI:<agent name>` (older rows say `AI_AGENT`). Nothing checks it.
 
@@ -53,7 +71,6 @@ Every stored timestamp is UTC ISO 8601 (`...+00:00`), so the activity log sorts 
 ## Not built yet
 
 - Authentication on this API. Any local process can read the MCP key, change or delete tasks, and choose its own `actor`; only browsers on other origins are blocked. The key protects the [MCP server](mcp-tools.md), not this API.
-- Lifecycle checks in the API itself (they live in the MCP tools).
 
 `task check-api` runs `backend/check_api.py`: the API in-process on a temporary copy of the database (migration, PATCH, timestamps, restore).
 

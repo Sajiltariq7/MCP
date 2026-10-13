@@ -10,9 +10,10 @@ The server speaks Streamable HTTP at `http://127.0.0.1:8001/mcp` and, for older 
 
 | Tool | Arguments | Does |
 | --- | --- | --- |
-| `add_task` | `title`, `description`, `priority` | Creates a Pending task with an id from the current time in ms, creator `AI:<agent name>` |
-| `get_tasks` | none | Returns the API's task list as raw JSON text |
-| `update_task_status` | `task_id`, `status`, `description` | Moves the task one step: Pending to In Progress, or In Progress to Needs Review (needs results in `description` or existing subtasks). Refuses anything else and names the next step |
+| `add_task` | `title`, `description`, `priority`, `evidence` (`screenshot` default, `attachment`, `none`), `evidence_details` | Creates a Pending task with an id from the current time in ms, creator `AI:<agent name>`, and the evidence it needs before review |
+| `attach_evidence` | `task_id`, `file_path` or `content_base64` + `filename`, `note` | Attaches a screenshot or other file (max 10 MB) through `POST /api/tasks/{id}/attachments` |
+| `get_tasks` | none | Returns every task as JSON, including `comments` (why a reviewer sent it back), `evidence_type`/`evidence_note`, and `attachments` |
+| `update_task_status` | `task_id`, `status`, `description` | Moves the task one step: Pending to In Progress, or In Progress to Needs Review (needs results in `description` or existing subtasks, and the evidence the task asks for). Refuses anything else and names the next step; the API's refusals come back as "Refused: ..." |
 | `update_task_details` | `task_id`, `description`, `subtasks` | Replaces the description and, if given, the subtask list |
 | `approve_task` | `task_id` | Moves one task from Needs Review to Completed; refuses any other status |
 | `bulk_approve_tasks` | none | Moves every Needs Review task to Completed and lists any that failed |
@@ -31,7 +32,7 @@ Both transports are wrapped by `AgentGate` in `mcp_server/server.py`. A `POST` (
 | Any MCP request with `Authorization: Bearer <key>` or `X-API-Key: <key>` matching the backend key | Passed through |
 | Missing or wrong key | `401` |
 | Backend unreachable, so the key can't be checked | `503` (fails closed) |
-| `GET /status` | Public JSON for the board: server name plus each connected agent's `id`, `name`, `version`, `connected_at`, `key_valid`. Never the key. CORS allows only the board's origin |
+| `GET /status` | Public JSON for the board: server name, each connected agent's `ids`, `sessions`, `name`, `version`, `connected_at`, `key_valid`, and `tools` (every tool's name, description and parameters, which the Agents tab lists). Never the key. CORS allows only the board's origin |
 | `POST /agents/{id}/disconnect` with the key | The board's **Disconnect** button: closes that agent's stream and ends its session (later requests with that session get `404`). The agent can connect again with the key; rotating the key keeps it out. CORS allows only the board's origin |
 
 - The key comes from `GET /api/mcp/key` and is cached for 3 seconds. Each open connection rechecks it every second, so after a rotation the server closes connections that use the old key within 5 seconds; new requests with the old key get `401`.
